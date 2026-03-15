@@ -590,8 +590,8 @@ class SeerrRequestarrCard extends HTMLElement {
       ]);
       this._trendMovies = movies;
       this._trendTV     = tv;
-      // Prefetch ratings for trending cards (movies only — Overseerr ratings endpoint is movies)
-      this._fetchRatingsForItems([...movies, ...tv]);
+      // Prefetch ratings for movie cards (TV has no ratings endpoint)
+      this._fetchRatingsForItems(movies);
     } catch (e) {
       this._trendError = e.message;
     } finally {
@@ -699,9 +699,10 @@ class SeerrRequestarrCard extends HTMLElement {
     this._paint();
     try {
       const path = media.mediaType === "movie" ? `/movie/${media.id}` : `/tv/${media.id}`;
+      const ratingPath = media.mediaType === "tv" ? null : path + "/ratings";
       const [full, ratings] = await Promise.all([
         this._get(path),
-        this._get(path + "/ratings").catch(() => null),
+        ratingPath ? this._get(ratingPath).catch(() => null) : Promise.resolve(null),
       ]);
       if (ratings) this._ratingsCache[media.id] = ratings;
       this._detailFull = { ...full, _ratings: ratings };
@@ -789,48 +790,59 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   async _fetchRatingsForItems(items) {
-    // Fetch Overseerr's ratings endpoint for each item in parallel (batched)
-    // Results cached in this._ratingsCache[tmdbId]
+    // Only movies have a /ratings endpoint in Overseerr.
+    // TV shows: we show TMDB voteAverage only (already in list data).
+    // Fetch in small parallel batches to avoid hammering the server.
+    const movies = items.filter(item =>
+      item.mediaType !== "tv" && !this._ratingsCache[item.id]
+    );
     await Promise.all(
-      items
-        .filter(item => (item.mediaType === "movie" || item.mediaType === undefined) && !this._ratingsCache[item.id])
-        .map(async item => {
-          try {
-            const path = item.mediaType === "tv" ? `/tv/${item.id}/ratings` : `/movie/${item.id}/ratings`;
-            const r = await this._get(path);
-            this._ratingsCache[item.id] = r;
-            // Surgically update any visible rating badges for this card
-            this._updateRatingBadge(item.id, r);
-          } catch {}
-        })
+      movies.map(async item => {
+        try {
+          const r = await this._get(`/movie/${item.id}/ratings`);
+          // Overseerr returns: criticsRating ("Rotten"|"Fresh"|"Certified Fresh"),
+          // criticsScore (number 0-100), audienceRating ("Upright"|"Spilled"),
+          // audienceScore (number 0-100), imdbRating (string like "8.1"),
+          // imdbVotes (string like "1,234,567")
+          this._ratingsCache[item.id] = r;
+          this._updateRatingBadge(item.id, item.voteAverage, r);
+        } catch {}
+      })
     );
   }
 
-  _updateRatingBadge(tmdbId, ratings) {
+  _updateRatingBadge(tmdbId, tmdbScore, ratings) {
+    // Find card in the live DOM and update its rating bar in place.
+    // Use innerHTML on the container (not outerHTML) to avoid losing the element.
     const card = this.shadowRoot.querySelector(`[data-id="${tmdbId}"]`);
     if (!card) return;
     const rb = card.querySelector(".rating-bar");
-    if (rb) rb.outerHTML = this._ratingBarHtml(ratings);
+    if (rb) rb.innerHTML = this._ratingBarInner(tmdbScore, ratings);
   }
 
-  _ratingBarHtml(r) {
-    if (!r) return `<div class="rating-bar"></div>`;
+  _ratingBarInner(tmdbScore, r) {
+    // Returns the INNER html for .rating-bar (not the wrapper div)
     const parts = [];
-    if (r.tmdbRating || r.voteAverage) {
-      const v = r.tmdbRating || r.voteAverage;
-      parts.push(`<span class="rb-item rb-tmdb" title="TMDB">⭐ ${Number(v).toFixed(1)}</span>`);
+    if (tmdbScore) {
+      parts.push(`<span class="rb-item rb-tmdb" title="TMDB">⭐ ${Number(tmdbScore).toFixed(1)}</span>`);
     }
-    if (r.imdbRating) {
+    if (r && r.imdbRating) {
       parts.push(`<span class="rb-item rb-imdb" title="IMDb">🎬 ${r.imdbRating}</span>`);
     }
-    if (r.rtCriticsScore != null) {
-      const fresh = RT_CERT(r.rtCriticsScore);
-      parts.push(`<span class="rb-item rb-rt" title="RT Critics" style="color:${fresh?"#f84":"#e44"}">${fresh?"🍅":"🤢"} ${r.rtCriticsScore}%</span>`);
+    if (r && r.criticsScore != null) {
+      const fresh = r.criticsScore >= 60;
+      const cert  = r.criticsScore >= 75 && r.criticsRating === "Certified Fresh";
+      parts.push(`<span class="rb-item rb-rt" title="RT Critics" style="color:${fresh?"#f84":"#e44"}">${cert?"🍅":(fresh?"🍅":"🤢")} ${r.criticsScore}%</span>`);
     }
-    if (r.rtAudienceScore != null) {
-      parts.push(`<span class="rb-item rb-rta" title="RT Audience">🍿 ${r.rtAudienceScore}%</span>`);
+    if (r && r.audienceScore != null) {
+      const pos = r.audienceScore >= 60;
+      parts.push(`<span class="rb-item rb-rta" title="RT Audience">🍿 ${r.audienceScore}%</span>`);
     }
-    return `<div class="rating-bar">${parts.join("")}</div>`;
+    return parts.join("") || "";
+  }
+
+  _ratingBarHtml(tmdbScore, r) {
+    return `<div class="rating-bar">${this._ratingBarInner(tmdbScore, r)}</div>`;
   }
 
   _openDiscoverDetail(card) {
@@ -844,9 +856,11 @@ class SeerrRequestarrCard extends HTMLElement {
     this._browseDetailLoading = true;
     this._paint();
     const path = (type === "tv" || m.mediaType === "tv") ? `/tv/${m.id}` : `/movie/${m.id}`;
+    // Only movies have a ratings endpoint
+    const ratingPath = (m.mediaType === "tv") ? null : path + "/ratings";
     Promise.all([
       this._get(path),
-      this._get(path + "/ratings").catch(() => null),
+      ratingPath ? this._get(ratingPath).catch(() => null) : Promise.resolve(null),
     ]).then(([full, ratings]) => {
       if (ratings) this._ratingsCache[m.id] = ratings;
       this._browseDetailFull    = { ...full, _ratings: ratings };
@@ -899,14 +913,19 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   _detailRatingsHtml(m) {
-    // Ratings come from _ratings field injected during detail load,
-    // or from ratingsCache, or from the base tmdb voteAverage
-    const r = m._ratings || this._ratingsCache[m.id] || {};
-    const tmdb = m.voteAverage || r.tmdbRating;
-    const imdb = r.imdbRating;
-    const rtC  = r.rtCriticsScore;
-    const rtA  = r.rtAudienceScore;
-    if (!tmdb && !imdb && !rtC && !rtA) return "";
+    // Overseerr /movie/{id}/ratings fields:
+    //   criticsRating: "Rotten" | "Fresh" | "Certified Fresh"
+    //   criticsScore: 0-100
+    //   audienceRating: "Upright" | "Spilled"
+    //   audienceScore: 0-100
+    //   imdbRating: string e.g. "8.1"
+    //   imdbVotes: string e.g. "1,234,567"
+    const r    = m._ratings || this._ratingsCache[m.id] || null;
+    const tmdb = m.voteAverage;
+    const imdb = r?.imdbRating;
+    const rtC  = r?.criticsScore;
+    const rtA  = r?.audienceScore;
+    if (!tmdb && !imdb && rtC == null && rtA == null) return "";
     const blocks = [];
     if (tmdb) blocks.push(`
       <div class="rating-block">
@@ -921,20 +940,24 @@ class SeerrRequestarrCard extends HTMLElement {
         <div class="rating-sublabel">IMDb</div>
       </div>`);
     if (rtC != null) {
-      const fresh = RT_CERT(rtC);
+      const fresh = rtC >= 60;
+      const cert  = rtC >= 75 && r.criticsRating === "Certified Fresh";
       blocks.push(`
         <div class="rating-block">
-          <div class="rating-logo">${fresh ? "🍅" : "🤢"}</div>
+          <div class="rating-logo">${cert ? "🍅" : fresh ? "🍅" : "🤢"}</div>
           <div class="rating-score" style="color:${fresh?"#f84":"#e44"}">${rtC}%</div>
           <div class="rating-sublabel">RT Critics</div>
         </div>`);
     }
-    if (rtA != null) blocks.push(`
-      <div class="rating-block">
-        <div class="rating-logo">🍿</div>
-        <div class="rating-score" style="color:#a8d8a8">${rtA}%</div>
-        <div class="rating-sublabel">RT Audience</div>
-      </div>`);
+    if (rtA != null) {
+      const pos = rtA >= 60;
+      blocks.push(`
+        <div class="rating-block">
+          <div class="rating-logo">${pos ? "🍿" : "😐"}</div>
+          <div class="rating-score" style="color:${pos?"#a8d8a8":"#e44"}">${rtA}%</div>
+          <div class="rating-sublabel">RT Audience</div>
+        </div>`);
+    }
     return blocks.length ? `<div class="detail-ratings">${blocks.join("")}</div>` : "";
   }
 
@@ -986,11 +1009,8 @@ class SeerrRequestarrCard extends HTMLElement {
     const cached = this._ratingsCache[item.id];
     // Show TMDB score immediately from list data; RT/IMDb fill in when fetched
     const tmdbScore = item.voteAverage ? Number(item.voteAverage).toFixed(1) : null;
-    const ratingBar = cached
-      ? this._ratingBarHtml(cached)
-      : (tmdbScore
-          ? `<div class="rating-bar"><span class="rb-item rb-tmdb" title="TMDB">⭐ ${tmdbScore}</span><span class="rb-item" style="color:var(--muted);font-size:7px">loading…</span></div>`
-          : `<div class="rating-bar"></div>`);
+    // Build rating bar: show TMDB score immediately, RT/IMDb once cached
+    const ratingBar = `<div class="rating-bar">${this._ratingBarInner(item.voteAverage, cached)}</div>`;
     return `
       <div class="rating-card" data-id="${item.id}" data-type="${item.mediaType || 'movie'}">
         ${this._availBadge(item.mediaInfo)}
@@ -1317,9 +1337,10 @@ class SeerrRequestarrCard extends HTMLElement {
     this._paint();
     // Fetch full details
     const path = m.mediaType === "movie" ? `/movie/${m.id}` : `/tv/${m.id}`;
+    const rPath = m.mediaType === "tv" ? null : path + "/ratings";
     Promise.all([
       this._get(path),
-      this._get(path + "/ratings").catch(() => null),
+      rPath ? this._get(rPath).catch(() => null) : Promise.resolve(null),
     ]).then(([full, ratings]) => {
       if (ratings) this._ratingsCache[m.id] = ratings;
       this._browseDetailFull    = { ...full, _ratings: ratings };
@@ -1485,8 +1506,13 @@ class SeerrRequestarrCard extends HTMLElement {
     this.shadowRoot.querySelectorAll(".tab").forEach(btn =>
       btn.addEventListener("click", () => {
         this._tab = btn.dataset.tab;
-        this._detail = null; this._detailFull = null;
-        this._browseMode = null;
+        // Clear ALL detail/browse state so tabs are always top-level
+        this._detail           = null;
+        this._detailFull       = null;
+        this._detailLoading    = false;
+        this._browseMode       = null;
+        this._browseDetail     = null;
+        this._browseDetailFull = null;
         this._updateTabs();
         this._paint();
         if (this._tab === "requests" && !this._requests.length && !this._reqLoading) this._loadRequests();
