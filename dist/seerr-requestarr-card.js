@@ -1765,12 +1765,17 @@ class SeerrRequestarrCard extends HTMLElement {
 
     history.pushState({ seerr: "s" }, "");
 
-    window.addEventListener("popstate", () => {
+    window.addEventListener("popstate", e => {
+
+      // Only handle popstate events that popped OUR sentinel.
+      // Any other popstate (HA's router, other cards, etc.) is ignored.
+      // This prevents HA's own history pushes from corrupting our grace state.
+      if (e.state?.seerr !== "s") return;
 
       // ── In a sub-view: navigate back one level ────────────────────────
-      // ALWAYS push sentinel back — sub-views can never exit the app.
+      // ALWAYS push sentinel back — sub-views can NEVER exit the app.
       if (this._browseDetail || this._detail || this._browseMode) {
-        history.pushState({ seerr: "s" }, ""); // sentinel back — cannot exit
+        history.pushState({ seerr: "s" }, ""); // restore sentinel
         this._cancelGrace();
         this._saveScroll();
         if (this._browseDetail) {
@@ -1786,20 +1791,19 @@ class SeerrRequestarrCard extends HTMLElement {
 
       // ── At top-level ──────────────────────────────────────────────────
       if (!this._warnActive) {
-        // First back at top-level: show toast, push sentinel back, arm grace.
-        history.pushState({ seerr: "s" }, ""); // sentinel back — not exiting yet
+        // First back at top-level: restore sentinel, show toast, arm grace.
+        history.pushState({ seerr: "s" }, ""); // restore sentinel
         this._warnActive = true;
         this._toast("Press back again to exit", "error");
         clearTimeout(this._backGraceTimer);
         this._backGraceTimer = setTimeout(() => {
-          this._warnActive = false; // grace expired, reset
+          this._warnActive = false; // grace window expired
         }, 3000);
       } else {
         // Second back within grace window at top-level: EXIT.
-        // Do NOT push sentinel back — let HA handle this popstate.
+        // Do NOT restore sentinel — HA will navigate back naturally.
         this._warnActive = false;
         clearTimeout(this._backGraceTimer);
-        // Sentinel is NOT restored here — HA will navigate back naturally.
       }
     });
   }
