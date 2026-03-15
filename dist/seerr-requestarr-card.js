@@ -248,6 +248,11 @@ const CSS = `
     border-radius: 3px; padding: 1px 4px; font-size: 8px; font-weight: 600;
     text-transform: uppercase; letter-spacing: .4px;
   }
+  .lang-badge {
+    background: rgba(16,185,129,.15); color: #10b981;
+    border-radius: 3px; padding: 1px 4px; font-size: 8px; font-weight: 600;
+    letter-spacing: .2px;
+  }
   .avail-dot {
     position: absolute; top: 5px; right: 5px; border-radius: 5px; padding: 2px 5px;
     font-size: 8px; font-weight: 700; backdrop-filter: blur(6px); line-height: 1;
@@ -575,6 +580,10 @@ class SeerrRequestarrCard extends HTMLElement {
       this._loadRequests();
       this._loadDiscover(1);
       this._setupHistory();
+      // Auto-refresh requests every 30s so status changes appear promptly
+      this._reqRefreshInterval = setInterval(() => {
+        this._loadRequests();
+      }, 30000);
     }
     this._syncStats();
   }
@@ -1118,6 +1127,20 @@ class SeerrRequestarrCard extends HTMLElement {
     return blocks.length ? `<div class="detail-ratings">${blocks.join("")}</div>` : "";
   }
 
+  _langName(code) {
+    if (!code) return null;
+    // Map common ISO 639-1 codes to readable names
+    const LANGS = {
+      en:"English", ja:"Japanese", ko:"Korean", zh:"Chinese", fr:"French",
+      es:"Spanish", de:"German", it:"Italian", pt:"Portuguese", ru:"Russian",
+      ar:"Arabic", hi:"Hindi", th:"Thai", tr:"Turkish", pl:"Polish",
+      nl:"Dutch", sv:"Swedish", da:"Danish", no:"Norwegian", fi:"Finnish",
+      cs:"Czech", hu:"Hungarian", ro:"Romanian", id:"Indonesian", vi:"Vietnamese",
+      he:"Hebrew", fa:"Persian", uk:"Ukrainian", el:"Greek", bg:"Bulgarian",
+    };
+    return LANGS[code] || code.toUpperCase();
+  }
+
   _cardTagline(item) {
     // Use tagline if present, otherwise first sentence of overview (≤65 chars)
     if (item.tagline) return item.tagline;
@@ -1152,7 +1175,7 @@ class SeerrRequestarrCard extends HTMLElement {
           <div class="trend-info">
             <div class="trend-title">${item.title || item.name || "Unknown"}</div>
             ${this._cardTagline(item) ? `<div class="trend-tagline">${this._cardTagline(item)}</div>` : ""}
-            <div class="trend-year">${year}</div>
+            <div class="trend-year">${year}${item.originalLanguage && item.originalLanguage !== "en" ? ` <span class="lang-badge">${this._langName(item.originalLanguage)}</span>` : ""}</div>
           </div>
           ${rbar}
         </div>
@@ -1174,7 +1197,7 @@ class SeerrRequestarrCard extends HTMLElement {
           <div class="card-info">
             <div class="card-title">${item.title || item.name || "Unknown"}</div>
             ${this._cardTagline(item) ? `<div class="card-tagline">${this._cardTagline(item)}</div>` : ""}
-            <div class="card-meta"><span>${year}</span><span class="type-badge">${type}</span></div>
+            <div class="card-meta"><span>${year}</span><span class="type-badge">${type}</span>${item.originalLanguage && item.originalLanguage !== "en" ? `<span class="lang-badge">${this._langName(item.originalLanguage)}</span>` : ""}</div>
           </div>
           ${rbar}
         </div>
@@ -1197,7 +1220,7 @@ class SeerrRequestarrCard extends HTMLElement {
           <div class="card-info">
             <div class="card-title">${item.title || item.name || "Unknown"}</div>
             ${this._cardTagline(item) ? `<div class="card-tagline">${this._cardTagline(item)}</div>` : ""}
-            <div class="card-meta"><span>${year}</span><span class="type-badge">${type}</span></div>
+            <div class="card-meta"><span>${year}</span><span class="type-badge">${type}</span>${item.originalLanguage && item.originalLanguage !== "en" ? `<span class="lang-badge">${this._langName(item.originalLanguage)}</span>` : ""}</div>
           </div>
           ${rbar}
         </div>
@@ -1346,6 +1369,8 @@ class SeerrRequestarrCard extends HTMLElement {
     const director    = (m.credits?.crew || []).find(c => c.job === "Director")?.name;
     const cast        = (m.credits?.cast || []).slice(0, 5).map(c => c.name).join(", ");
     const tagline     = m.tagline;
+    const origLang    = m.originalLanguage ? this._langName(m.originalLanguage) : null;
+    const origTitle   = m.originalTitle || m.originalName || null;
 
     return `
       <div class="detail-outer">
@@ -1393,6 +1418,7 @@ class SeerrRequestarrCard extends HTMLElement {
               ${network   ? `<div class="info-item"><div class="info-label">Network</div><div class="info-value">${network}</div></div>` : ""}
               ${studio    ? `<div class="info-item"><div class="info-label">Studio</div><div class="info-value">${studio}</div></div>` : ""}
               ${year !== "—" ? `<div class="info-item"><div class="info-label">${isMovie ? "Released" : "First Aired"}</div><div class="info-value">${isMovie ? (m.releaseDate||year) : (m.firstAirDate||year)}</div></div>` : ""}
+              ${origLang  ? `<div class="info-item"><div class="info-label">Original Language</div><div class="info-value">${origLang}${origTitle && origTitle !== (m.title||m.name) ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">${origTitle}</div>` : ""}</div></div>` : ""}
             </div>
             ${cast ? `<div class="detail-section-title">Cast</div><div class="detail-overview">${cast}</div>` : ""}
             `}
@@ -1878,7 +1904,7 @@ class SeerrRequestarrCard extends HTMLElement {
       this._browseDetailLoading = false;
       this._updateTabs();
       this._paint();
-      if (this._tab === "requests" && !this._requests.length && !this._reqLoading) this._loadRequests();
+      if (this._tab === "requests" && !this._reqLoading) this._loadRequests();  // always refresh on tab open
       if (this._tab === "trending" && !this._trendMovies.length && !this._trendLoading) this._loadTrending();
       if (this._tab === "discover" && !this._discData.length && !this._discLoading) this._loadDiscover(1);
     });
