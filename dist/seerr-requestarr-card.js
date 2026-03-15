@@ -1756,63 +1756,59 @@ class SeerrRequestarrCard extends HTMLElement {
     this._warnActive     = false;
     this._backGraceTimer = null;
 
-    // ── CORRECT PATTERN ───────────────────────────────────────────────────
-    // Push one history entry each time the user navigates FORWARD into a
-    // sub-view (detail / browse). The history stack then exactly mirrors
-    // the card's navigation depth.
+    // Stack layout:
+    //   At root:      [GRACE] [HA-entries...]
+    //   In sub-view:  [NAV]   [GRACE] [HA-entries...]
     //
-    // On popstate (back button): if we have a sub-view open, close it.
-    // When the stack is empty (user is at root), HA handles back natively.
+    // _pushNav() is called on every forward navigation (entering detail/browse).
+    // pushGrace() is called on init and after every nav-close or grace-show.
     //
-    // Grace toast: push a GRACE entry on top when at root. On popstate:
-    //   - If popped state is "grace" and _warnActive: EXIT (let HA handle)
-    //   - If popped state is "grace" and !_warnActive: show toast, re-push grace
-    //   - If popped state is "nav": close sub-view, don't re-push grace entry
-    //
-    // The grace entry is separate from nav entries. It is ALWAYS on top.
-    // We push it: on init, after every nav pop, and after every grace toast.
-    // So the stack is always: [GRACE] [nav?] [nav?] [...] [HA-entries]
+    // On back press the topmost entry is consumed.
+    // CRITICAL: Check JS sub-view state FIRST (before e.state).
+    // When in a sub-view, back pops NAV and lands on GRACE (e.state="grace").
+    // If we checked e.state first we'd wrongly run the grace/exit logic.
+    // Checking JS state first correctly identifies the nav-close case.
 
     const pushGrace = () => history.pushState({ seerr: "grace" }, "");
-    const pushNav   = () => history.pushState({ seerr: "nav"   }, "");
 
-    // Seed grace entry on top
-    pushGrace();
+    pushGrace(); // seed
 
     window.addEventListener("popstate", e => {
       const s = e.state?.seerr;
 
-      if (s === "nav") {
-        // A forward-navigation entry was popped — close sub-view
+      // ── Sub-view check FIRST (e.state is unreliable here) ────────────
+      // When in a sub-view, NAV was on top. Back popped it → e.state="grace".
+      // We must check JS state before e.state to handle this correctly.
+      if (this._browseDetail || this._detail || this._browseMode) {
         this._cancelGrace();
         this._saveScroll();
         if      (this._browseDetail) { this._browseDetail = null; this._browseDetailFull = null; }
         else if (this._detail)       { this._detail = null; this._detailFull = null; }
-        else if (this._browseMode)   { this._browseMode = null; }
-        // Push grace back on top so next back is intercepted
-        pushGrace();
+        else                         { this._browseMode = null; }
+        pushGrace(); // restore grace on top for next back press
         this._paint();
         return;
       }
 
+      // ── At root level: e.state tells us what was on top ──────────────
       if (s === "grace") {
         if (!this._warnActive) {
-          // First press at root: show toast, re-push grace, arm timer
+          // First back at root: show toast, re-push grace, arm timer
           pushGrace();
           this._warnActive = true;
           this._toast("Press back again to exit", "error");
           clearTimeout(this._backGraceTimer);
           this._backGraceTimer = setTimeout(() => { this._warnActive = false; }, 3000);
         } else {
-          // Second press within grace: EXIT — do NOT push grace back
+          // Second back within grace: EXIT — do not re-push grace
           this._warnActive = false;
           clearTimeout(this._backGraceTimer);
-          // Stack is now at HA's own entries — HA handles exit naturally
+          // Stack is now HA's entries — HA handles exit naturally
         }
         return;
       }
 
-      // Any other state (HA's own entries): push grace back and ignore
+      // HA's own entry was popped (shouldn't normally happen): restore grace
       pushGrace();
     });
   }
