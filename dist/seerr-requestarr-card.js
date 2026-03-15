@@ -457,16 +457,24 @@ class SeerrRequestarrCard extends HTMLElement {
     this._trendError   = null;
     this._paint();
     try {
-      // Overseerr discover endpoints accept 'take' (default 20, max ~100)
-      // Use take directly — much simpler and correct.
-      const movieTake = this._MC;
-      const tvTake    = this._TC;
+      // Overseerr discover endpoints only accept 'page' (20 results per page).
+      // Fetch as many pages as needed to satisfy the configured count.
+      const fetchN = async (path, count) => {
+        const pages   = Math.ceil(count / 20);
+        const results = [];
+        for (let p = 1; p <= pages; p++) {
+          const data = await this._get(path, { page: p });
+          results.push(...(data.results || []));
+          if ((data.results || []).length < 20) break; // no more pages
+        }
+        return results.slice(0, count);
+      };
       const [movies, tv] = await Promise.all([
-        this._get("/discover/movies", { take: movieTake }),
-        this._get("/discover/tv",     { take: tvTake }),
+        fetchN("/discover/movies", this._MC),
+        fetchN("/discover/tv",     this._TC),
       ]);
-      this._trendMovies = (movies.results || []).slice(0, movieTake);
-      this._trendTV     = (tv.results     || []).slice(0, tvTake);
+      this._trendMovies = movies;
+      this._trendTV     = tv;
     } catch (e) {
       this._trendError = e.message;
     } finally {
@@ -480,7 +488,7 @@ class SeerrRequestarrCard extends HTMLElement {
     this._paint();
     try {
       const path = type === "movies" ? "/discover/movies" : "/discover/tv";
-      const data = await this._get(path, { take: 20, skip: (page - 1) * 20 });
+      const data = await this._get(path, { page: page });
       const results = data.results || [];
       if (page === 1) this._browseData = results;
       else            this._browseData.push(...results);
