@@ -237,6 +237,11 @@ const CSS = `
     /* Reserve space for exactly 2 lines so all cards have identical info height */
     min-height: calc(1.3em * 2);
   }
+  .card-tagline {
+    font-size: 8px; color: var(--muted); line-height: 1.3; margin-bottom: 3px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    font-style: italic;
+  }
   .card-meta { font-size: 9px; color: var(--muted); display: flex; align-items: center; justify-content: space-between; }
   .type-badge {
     background: rgba(124,92,191,.25); color: #b09de0;
@@ -255,7 +260,12 @@ const CSS = `
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
     min-height: calc(1.3em * 2);
   }
-  .trend-year { font-size: 8px; color: var(--muted); margin-top: 2px; }
+  .trend-tagline {
+    font-size: 7.5px; color: var(--muted); line-height: 1.3; margin-bottom: 2px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    font-style: italic;
+  }
+  .trend-year { font-size: 8px; color: var(--muted); margin-top: 1px; }
 
   /* ── Detail view ── */
   .detail-outer {
@@ -1104,6 +1114,18 @@ class SeerrRequestarrCard extends HTMLElement {
     return blocks.length ? `<div class="detail-ratings">${blocks.join("")}</div>` : "";
   }
 
+  _cardTagline(item) {
+    // Use tagline if present, otherwise first sentence of overview (≤65 chars)
+    if (item.tagline) return item.tagline;
+    if (item.overview) {
+      const sentence = item.overview.split(/[.!?]/)[0].trim();
+      if (sentence.length > 10) {
+        return sentence.length > 65 ? sentence.slice(0, 63) + "…" : sentence;
+      }
+    }
+    return "";
+  }
+
   _runtime(m) {
     const r = m?.runtime;
     if (!r) return null;
@@ -1125,6 +1147,7 @@ class SeerrRequestarrCard extends HTMLElement {
         <div class="card-body">
           <div class="trend-info">
             <div class="trend-title">${item.title || item.name || "Unknown"}</div>
+            ${this._cardTagline(item) ? `<div class="trend-tagline">${this._cardTagline(item)}</div>` : ""}
             <div class="trend-year">${year}</div>
           </div>
           ${rbar}
@@ -1146,6 +1169,7 @@ class SeerrRequestarrCard extends HTMLElement {
         <div class="card-body">
           <div class="card-info">
             <div class="card-title">${item.title || item.name || "Unknown"}</div>
+            ${this._cardTagline(item) ? `<div class="card-tagline">${this._cardTagline(item)}</div>` : ""}
             <div class="card-meta"><span>${year}</span><span class="type-badge">${type}</span></div>
           </div>
           ${rbar}
@@ -1168,6 +1192,7 @@ class SeerrRequestarrCard extends HTMLElement {
         <div class="card-body">
           <div class="card-info">
             <div class="card-title">${item.title || item.name || "Unknown"}</div>
+            ${this._cardTagline(item) ? `<div class="card-tagline">${this._cardTagline(item)}</div>` : ""}
             <div class="card-meta"><span>${year}</span><span class="type-badge">${type}</span></div>
           </div>
           ${rbar}
@@ -1716,27 +1741,15 @@ class SeerrRequestarrCard extends HTMLElement {
     if (this._historyBound) return;
     this._historyBound = true;
     this._backGraceTimer = null;
+    this._warnActive = false;
 
-    // Strategy: keep TWO guard entries above the real HA history entry.
-    //   stack (top → bottom): [guard] [warn] [HA-base]
-    // 
-    // When back is pressed:
-    //   A) In sub-view (detail/browse): handle in JS, re-push guard to stay at top
-    //   B) At top-level, guard pops → we're at warn:
-    //      push guard back, show "press again" toast
-    //   C) At top-level, second press → warn pops → we're at HA-base:
-    //      do NOT intercept — HA handles navigation naturally
-
-    history.replaceState({ seerr: "ha-base" }, ""); // bottom: real HA entry
-    history.pushState(   { seerr: "warn"    }, ""); // middle: shows toast
-    history.pushState(   { seerr: "guard"   }, ""); // top: always consumed first
+    // Push ONE sentinel so we always have something to pop before HA's own entries.
+    history.pushState({ seerr: "sentinel" }, "");
 
     window.addEventListener("popstate", e => {
-      const s = e.state?.seerr;
-
-      // ── Inside a sub-view: navigate back one level in the card ─────────
+      // ── In a sub-view: navigate back one level ────────────────────────
       if (this._browseDetail || this._detail || this._browseMode) {
-        history.pushState({ seerr: "guard" }, ""); // put guard back on top
+        history.pushState({ seerr: "sentinel" }, ""); // restore sentinel
         this._saveScroll();
         if (this._browseDetail) {
           this._browseDetail = null; this._browseDetailFull = null;
@@ -1749,53 +1762,23 @@ class SeerrRequestarrCard extends HTMLElement {
         return;
       }
 
-      // ── At top level ───────────────────────────────────────────────────
-      if (s === "warn") {
-        // "warn" was popped — push guard back, show toast
-        history.pushState({ seerr: "guard" }, "");
-        history.pushState({ seerr: "guard" }, ""); // extra guard so next back hits warn again
-        // Replace top with warn + guard so the cycle works on second use
-        // Actually simpler: just rebuild the full stack
-        history.replaceState({ seerr: "guard" }, ""); 
-        // Re-insert warn below guard
-        // We can't insert below, so instead: just show toast and on next popstate let it go
+      // ── At top-level tab ──────────────────────────────────────────────
+      if (!this._warnActive) {
+        // First press: show warning, re-push sentinel, start timer
+        history.pushState({ seerr: "sentinel" }, ""); // restore sentinel
         this._warnActive = true;
         this._toast("Press back again to exit", "error");
         clearTimeout(this._backGraceTimer);
         this._backGraceTimer = setTimeout(() => {
           this._warnActive = false;
-          this._toast("", "");
-          // Re-seed the guard stack so back-grace resets
-          history.replaceState({ seerr: "ha-base" }, "");
-          history.pushState({ seerr: "warn"    }, "");
-          history.pushState({ seerr: "guard"   }, "");
+          // Clear the toast by triggering with empty (toast fades anyway)
         }, 3000);
-        return;
-      }
-
-      if (s === "guard") {
-        if (this._warnActive) {
-          // Second press within grace window — let HA handle it
-          this._warnActive = false;
-          clearTimeout(this._backGraceTimer);
-          // Don't intercept — HA navigation takes over
-          return;
-        }
-        // guard popped normally → show warning
-        history.pushState({ seerr: "guard" }, ""); // put guard back
-        this._warnActive = true;
-        this._toast("Press back again to exit", "error");
+      } else {
+        // Second press within 3s: let HA handle it (exit)
+        this._warnActive = false;
         clearTimeout(this._backGraceTimer);
-        this._backGraceTimer = setTimeout(() => {
-          this._warnActive = false;
-          this._toast("", "");
-          history.replaceState({ seerr: "ha-base" }, "");
-          history.pushState({ seerr: "warn"    }, "");
-          history.pushState({ seerr: "guard"   }, "");
-        }, 3000);
-        return;
+        // Don't push sentinel back — allow HA to navigate away
       }
-      // s === "ha-base" or anything else: let HA handle it
     });
   }
 
