@@ -394,16 +394,15 @@ const CSS = `
 
   /* ── Rating bar on cards ── */
   .rating-bar {
-    display: flex; flex-wrap: wrap; gap: 3px; padding: 4px 6px 5px;
-    border-top: 1px solid var(--border); min-height: 24px; background: rgba(0,0,0,.25);
-    /* margin-top: auto ensures it's always at the bottom of the flex column */
-    margin-top: auto; flex-shrink: 0;
+    display: flex; flex-wrap: nowrap; gap: 2px; padding: 3px 5px 4px;
+    border-top: 1px solid var(--border); height: 22px; background: rgba(0,0,0,.25);
+    margin-top: auto; flex-shrink: 0; overflow: hidden; align-items: center;
   }
   .rating-bar:empty { display: none; }
   .rb-item {
-    font-size: 8px; font-weight: 600; white-space: nowrap;
-    background: rgba(255,255,255,.06); border-radius: 3px; padding: 1px 4px;
-    color: var(--text);
+    font-size: 7.5px; font-weight: 600; white-space: nowrap;
+    background: rgba(255,255,255,.06); border-radius: 3px; padding: 1px 3px;
+    color: var(--text); flex-shrink: 0;
   }
   .rb-tmdb { color: #e88800; }
   .rb-imdb { color: #f5c518; }
@@ -1540,6 +1539,7 @@ class SeerrRequestarrCard extends HTMLElement {
     tc.querySelectorAll("[data-dtype]").forEach(btn =>
       btn.addEventListener("click", () => {
         if (this._discType === btn.dataset.dtype) return;
+        this._saveScroll(); // save disc-grid scroll before switching type
         this._discType    = btn.dataset.dtype;
         this._discSection = DISCOVER_SECTIONS[this._discType][0].id;
         this._discData    = []; this._discPage = 1; this._discDone = false;
@@ -1551,12 +1551,12 @@ class SeerrRequestarrCard extends HTMLElement {
     tc.querySelectorAll("[data-dsec]").forEach(btn =>
       btn.addEventListener("click", () => {
         if (this._discSection === btn.dataset.dsec) return;
+        this._saveScroll(); // save disc-grid scroll before switching section
         // Toggle active class on pills without touching scroll
         this.shadowRoot.querySelectorAll("[data-dsec]").forEach(b =>
           b.classList.toggle("active", b.dataset.dsec === btn.dataset.dsec));
         this._discSection = btn.dataset.dsec;
         this._discData    = []; this._discPage = 1; this._discDone = false;
-        // Load with surgical grid-only updates (preserves controls + scroll)
         this._loadDiscoverGrid(1);
       })
     );
