@@ -455,16 +455,18 @@ const CSS = `
 
   /* Ratings in detail view */
   .detail-ratings {
-    display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 7px; margin-bottom: 14px;
   }
   .rating-block {
     background: var(--surf2); border: 1px solid var(--border);
-    border-radius: 9px; padding: 9px 12px; display: flex; flex-direction: column;
-    align-items: center; min-width: 70px; flex: 1;
+    border-radius: 9px; padding: 10px 8px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
   }
-  .rating-logo { font-size: 14px; margin-bottom: 3px; }
-  .rating-score { font-family: var(--disp); font-size: 18px; font-weight: 800; line-height: 1; }
-  .rating-sublabel { font-size: 9px; color: var(--muted); margin-top: 2px; text-align: center; }
+  .rating-logo  { font-size: 16px; margin-bottom: 4px; }
+  .rating-score { font-family: var(--disp); font-size: 20px; font-weight: 800; line-height: 1; }
+  .rating-sublabel { font-size: 9px; color: var(--muted); margin-top: 3px; text-align: center; letter-spacing: .3px; }
 
   /* ── Toast ── */
   .toast {
@@ -527,6 +529,7 @@ class SeerrRequestarrCard extends HTMLElement {
     this._discDone      = false;
     this._ratingsCache  = {};         // tmdbId -> ratings object
     this._historyBound  = false;       // whether popstate listener is set up
+    this._scrollPos     = {};          // { key: scrollTop } remembered scroll positions
   }
 
   static getStubConfig() {
@@ -1404,8 +1407,11 @@ class SeerrRequestarrCard extends HTMLElement {
       const type = (req.type==="movie"||med.mediaType==="movie") ? "Movie" : "TV";
       const rs   = REQST[req.status] || REQST[1];
       const date = req.createdAt ? new Date(req.createdAt).toLocaleDateString() : "";
+      // Build a minimal media-like object for the detail view
+      const tmdbId = med.tmdbId || (req._d?.id);
+      const mType  = (req.type==="movie"||med.mediaType==="movie") ? "movie" : "tv";
       return `
-        <div class="req-item">
+        <div class="req-item" data-reqid="${tmdbId}" data-reqtype="${mType}" style="cursor:pointer">
           ${p ? `<img class="req-thumb" src="${p}" alt="" loading="lazy">` : `<div class="req-thumb-ph">${type==="Movie"?"🎬":"📺"}</div>`}
           <div class="req-info">
             <div class="req-title">${title}${year!=="—"?` (${year})`:""}</div>
@@ -1422,11 +1428,13 @@ class SeerrRequestarrCard extends HTMLElement {
   _paint() {
     const tc = this.shadowRoot.querySelector(".tc");
     if (!tc) return;
+    this._saveScroll(); // remember position of current view before replacing it
 
     // Detail opened from within browse view
     if (this._browseDetail) {
       tc.innerHTML = this._detailHtml(this._browseDetail, this._browseDetailFull, this._browseDetailLoading);
       this._bindBrowseDetail(tc);
+      this._restoreScroll();
       return;
     }
 
@@ -1434,6 +1442,7 @@ class SeerrRequestarrCard extends HTMLElement {
     if (this._browseMode) {
       tc.innerHTML = this._browseHtml();
       this._bindBrowse(tc);
+      this._restoreScroll();
       return;
     }
 
@@ -1441,6 +1450,7 @@ class SeerrRequestarrCard extends HTMLElement {
     if (this._detail) {
       tc.innerHTML = this._detailHtml(this._detailFull || this._detail, this._detailFull, this._detailLoading);
       this._bindDetail(tc);
+      this._restoreScroll();
       return;
     }
 
@@ -1448,8 +1458,9 @@ class SeerrRequestarrCard extends HTMLElement {
       case "trending": tc.innerHTML = this._trendingHtml(); this._bindTrending(tc);  break;
       case "discover": tc.innerHTML = this._discoverHtml(); this._bindDiscover(tc); break;
       case "search":   tc.innerHTML = this._searchHtml();   this._bindSearch(tc);   break;
-      case "requests": tc.innerHTML = this._requestsHtml(); this._bindRetry(tc);    break;
+      case "requests": tc.innerHTML = this._requestsHtml(); this._bindRetry(tc); this._bindRequests(tc); break;
     }
+    this._restoreScroll(); // restore remembered position for this view
   }
 
   _paintSearch() {
@@ -1605,6 +1616,25 @@ class SeerrRequestarrCard extends HTMLElement {
     this._bindRetry(tc);
   }
 
+  _bindRequests(tc) {
+    tc.querySelectorAll(".req-item[data-reqid]").forEach(item => {
+      item.addEventListener("click", () => {
+        const tmdbId = parseInt(item.dataset.reqid);
+        const mType  = item.dataset.reqtype;
+        if (!tmdbId || !mType) return;
+        // Find the matching enriched request to get poster/title for immediate display
+        const req = this._requests.find(r => {
+          const med = r.media || {};
+          return (med.tmdbId === tmdbId || r._d?.id === tmdbId);
+        });
+        const stub = req?._d || req?.media || {};
+        // Open detail directly using the tmdbId — treat like a media card click
+        const media = { id: tmdbId, mediaType: mType, ...stub };
+        this._loadDetail(media);
+      });
+    });
+  }
+
   _bindRetry(tc) {
     tc.querySelectorAll(".retry-btn").forEach(btn => {
       btn.addEventListener("click", () => {
@@ -1633,27 +1663,93 @@ class SeerrRequestarrCard extends HTMLElement {
 
   // ── Browser back button support ──────────────────────────────────────────
 
+  // ── Scroll position memory ─────────────────────────────────────────────────
+
+  _scrollKey() {
+    // Unique key for the current view's scrollable container
+    if (this._browseDetail)  return `browseDetail:${this._browseDetail?.id}`;
+    if (this._detail)        return `detail:${this._detail?.id}`;
+    if (this._browseMode)    return `browse:${this._browseMode}`;
+    if (this._tab === "discover") return `discover:${this._discType}:${this._discSection}`;
+    if (this._tab === "requests") return "requests";
+    if (this._tab === "trending") return "trending";
+    if (this._tab === "search")   return `search:${this._searchQuery}`;
+    return this._tab;
+  }
+
+  _saveScroll() {
+    const key = this._scrollKey();
+    const el  = this._scrollEl();
+    if (el) this._scrollPos[key] = el.scrollTop;
+  }
+
+  _restoreScroll() {
+    const key = this._scrollKey();
+    const el  = this._scrollEl();
+    if (el && this._scrollPos[key] != null) {
+      // Use rAF to ensure DOM is fully laid out before restoring
+      requestAnimationFrame(() => { el.scrollTop = this._scrollPos[key]; });
+    }
+  }
+
+  _scrollEl() {
+    // Returns the active scrollable element for the current view
+    const sr = this.shadowRoot;
+    if (this._browseDetail)  return sr.querySelector(".detail-scroll");
+    if (this._detail)        return sr.querySelector(".detail-scroll");
+    if (this._browseMode)    return sr.querySelector(".browse-grid");
+    if (this._tab === "discover") return sr.querySelector(".disc-grid");
+    if (this._tab === "requests") return sr.querySelector(".req-wrap");
+    if (this._tab === "trending") return sr.querySelector(".trend-wrap");
+    if (this._tab === "search")   return sr.querySelector(".scroll-grid");
+    return null;
+  }
+
   _setupHistory() {
     if (this._historyBound) return;
     this._historyBound = true;
-    // Replace the current history entry with a base state so we can
-    // intercept the back button while inside the card.
-    history.replaceState({ seerrBase: true }, "");
+    this._backGraceCount = 0;    // presses on base state before exiting HA
+    this._backGraceTimer = null;
+
+    // Seed two history entries so we absorb 2 back presses before exiting.
+    // Entry 0: base (will trigger exit to HA if popped)
+    // Entry 1: guard1 (first back press — show toast warning)
+    // Entry 2: guard2 (where we start — second back press exits)
+    history.replaceState({ seerr: "base"   }, "");
+    history.pushState(   { seerr: "guard1" }, "");
+    history.pushState(   { seerr: "guard2" }, "");
+
     window.addEventListener("popstate", (e) => {
-      // Only handle if we are showing a sub-view inside the card
-      const inSubView = this._detail || this._browseDetail || this._browseMode ||
-                        (this._discData.length && this._tab === "discover" && this._discSection !== DISCOVER_SECTIONS[this._discType][0].id);
-      if (!inSubView) return;
-      // Re-push base state so back button works again next time
-      history.pushState({ seerrBase: true }, "");
-      // Navigate back one level
-      if (this._browseDetail) {
-        this._browseDetail = null; this._browseDetailFull = null; this._paint();
-      } else if (this._detail) {
-        this._detail = null; this._detailFull = null; this._paint();
-      } else if (this._browseMode) {
-        this._browseMode = null; this._paint();
+      const state = e.state?.seerr;
+
+      // ── Still inside a card sub-view ──────────────────────────────────
+      if (this._browseDetail || this._detail || this._browseMode) {
+        // Navigate back one level inside the card
+        history.pushState({ seerr: "guard2" }, ""); // restore our top entry
+        if (this._browseDetail) {
+          this._browseDetail = null; this._browseDetailFull = null; this._paint();
+        } else if (this._detail) {
+          this._detail = null; this._detailFull = null; this._paint();
+        } else if (this._browseMode) {
+          this._browseMode = null; this._paint();
+        }
+        return;
       }
+
+      // ── At top-level tab ──────────────────────────────────────────────
+      if (state === "guard1") {
+        // First press from top-level: warn and push guard2 back
+        history.pushState({ seerr: "guard2" }, "");
+        this._toast("Press back again to exit", "error");
+        // Clear warning after 3s
+        clearTimeout(this._backGraceTimer);
+        this._backGraceTimer = setTimeout(() => {
+          this._toast("", ""); // clear
+        }, 2800);
+        return;
+      }
+      // state === "base" — second press: let HA handle it (don't intercept)
+      // The popstate already moved history back to "base" so HA navigation takes over
     });
   }
 
