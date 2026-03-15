@@ -514,7 +514,8 @@ class SeerrRequestarrCard extends HTMLElement {
       this._browseDone = results.length < 20;
       this._browsePage = page;
       this._browseLoading = false;
-      // Surgically append new cards + update footer
+      // Surgically append new cards to the grid — footer is a sibling AFTER
+      // the grid, so appending to the grid never displaces it.
       const grid = this.shadowRoot.querySelector(".browse-grid .poster-grid");
       if (grid) {
         const frag = document.createDocumentFragment();
@@ -527,7 +528,7 @@ class SeerrRequestarrCard extends HTMLElement {
         });
         grid.appendChild(frag);
       }
-      // Update footer
+      // Update the footer (sibling of grid, already at bottom)
       const footer2 = this.shadowRoot.querySelector(".browse-footer");
       if (footer2) {
         footer2.innerHTML = this._browseDone
@@ -729,16 +730,21 @@ class SeerrRequestarrCard extends HTMLElement {
 
   // ── Browse (full-screen) HTML ─────────────────────────────────────────────
   _browseHtml() {
-    const label = this._browseMode === "movies" ? "🎬 Trending Movies" : "📺 Trending TV Shows";
+    const label  = this._browseMode === "movies" ? "🎬 Trending Movies" : "📺 Trending TV Shows";
+    // Footer lives OUTSIDE poster-grid so it never interrupts the grid's
+    // auto-fill layout and new cards always slot into existing gaps.
     const footer = !this._browseDone
-      ? `<div class="browse-footer" style="grid-column:1/-1;display:flex;justify-content:center;padding:8px 0">
+      ? `<div class="browse-footer" style="display:flex;justify-content:center;padding:10px 0 4px">
           ${this._browseLoading
             ? `<div class="spinner" style="width:22px;height:22px"></div>`
             : `<button class="retry-btn" data-action="load-more">Load more</button>`}
-        </div>` : `<div class="browse-footer"></div>`;
-    const grid  = this._browseData.length
-      ? `<div class="poster-grid">${this._browseData.map(i => this._mediaCardHtml(i)).join("")}${footer}</div>`
-      : (this._browseLoading ? `<div class="state-box"><div class="spinner"></div><span>Loading…</span></div>` : "");
+        </div>`
+      : `<div class="browse-footer"></div>`;
+    const grid   = this._browseData.length
+      ? `<div class="poster-grid">${this._browseData.map(i => this._mediaCardHtml(i)).join("")}</div>${footer}`
+      : (this._browseLoading
+          ? `<div class="state-box"><div class="spinner"></div><span>Loading…</span></div>`
+          : "");
     return `
       <div class="browse-wrap">
         <div class="browse-hdr">
