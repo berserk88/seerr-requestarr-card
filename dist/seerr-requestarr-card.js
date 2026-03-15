@@ -1489,6 +1489,7 @@ class SeerrRequestarrCard extends HTMLElement {
   // ── Paint ─────────────────────────────────────────────────────────────────
   _paint() {
     const tc = this.shadowRoot.querySelector(".tc");
+    if (this._tab === "discover" && this._discPage >= 1) { console.warn("[Seerr] _paint on discover, discLoading=" + this._discLoading + " discPage=" + this._discPage + " dataLen=" + this._discData.length, (new Error).stack.split("\n").slice(1,4).join(" | ")); }
     if (!tc) return;
     // Detail opened from within browse view
     if (this._browseDetail) {
