@@ -220,13 +220,13 @@ const CSS = `
   .media-card img, .trend-card img, .rating-card img {
     width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; background: var(--surf); flex-shrink: 0;
   }
-  .trend-card img { width: 90px; height: 135px; }
+  .trend-card img { width: 120px; height: 180px; }
   .no-poster {
     aspect-ratio: 2/3; background: var(--surf); flex-shrink: 0;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     font-size: 22px; gap: 4px; width: 100%;
   }
-  .trend-card .no-poster { width: 90px; height: 135px; }
+  .trend-card .no-poster { width: 120px; height: 180px; }
   .no-poster span { font-size: 9px; color: var(--muted); text-align: center; padding: 0 6px; }
   /* card-body grows to fill remaining space, pushing rating-bar to bottom */
   .card-body { display: flex; flex-direction: column; flex: 1; }
@@ -248,7 +248,7 @@ const CSS = `
     font-size: 8px; font-weight: 700; backdrop-filter: blur(6px); line-height: 1;
   }
   /* Trend card: narrow horizontal scroll version */
-  .trend-card { width: 90px; flex-shrink: 0; }
+  .trend-card { width: 120px; flex-shrink: 0; }
   .trend-info { padding: 5px 6px 3px; flex: 1; }
   .trend-title {
     font-size: 9px; font-weight: 500; line-height: 1.3;
