@@ -1756,60 +1756,61 @@ class SeerrRequestarrCard extends HTMLElement {
     this._warnActive     = false;
     this._backGraceTimer = null;
 
-    // Stack layout:
+    // ── Stack layout ──────────────────────────────────────────────────────
     //   At root:      [GRACE] [HA-entries...]
     //   In sub-view:  [NAV]   [GRACE] [HA-entries...]
     //
-    // _pushNav() is called on every forward navigation (entering detail/browse).
-    // pushGrace() is called on init and after every nav-close or grace-show.
+    // Key fact about e.state in popstate:
+    //   e.state = state of entry we LANDED ON (destination), not what was popped.
     //
-    // On back press the topmost entry is consumed.
-    // CRITICAL: Check JS sub-view state FIRST (before e.state).
-    // When in a sub-view, back pops NAV and lands on GRACE (e.state="grace").
-    // If we checked e.state first we'd wrongly run the grace/exit logic.
-    // Checking JS state first correctly identifies the nav-close case.
+    // Therefore:
+    //   Back pops GRACE → lands on HA-entry → e.state = HA's state (not "grace")
+    //   Back pops NAV   → lands on GRACE    → e.state = {seerr:"grace"}
+    //
+    // Logic (check sub-view JS state FIRST, then e.state):
+    //   Case A: sub-view open → NAV was popped → close sub-view, pushGrace
+    //   Case B: no sub-view, e.state.seerr === "grace" → this can't happen
+    //           (if no sub-view, NAV wasn't on top, so we can't land on GRACE)
+    //           Treat as root back anyway for safety.
+    //   Case C: no sub-view, e.state anything else → GRACE was popped → root back
+    //           Show toast / exit.
 
     const pushGrace = () => history.pushState({ seerr: "grace" }, "");
+    const pushNav   = () => history.pushState({ seerr: "nav"   }, "");
 
-    pushGrace(); // seed
+    pushGrace(); // seed initial grace entry
 
     window.addEventListener("popstate", e => {
       const s = e.state?.seerr;
 
-      // ── Sub-view check FIRST (e.state is unreliable here) ────────────
-      // When in a sub-view, NAV was on top. Back popped it → e.state="grace".
-      // We must check JS state before e.state to handle this correctly.
+      // Case A: sub-view is open → close it (NAV was on top and was just popped)
       if (this._browseDetail || this._detail || this._browseMode) {
         this._cancelGrace();
         this._saveScroll();
         if      (this._browseDetail) { this._browseDetail = null; this._browseDetailFull = null; }
         else if (this._detail)       { this._detail = null; this._detailFull = null; }
         else                         { this._browseMode = null; }
-        pushGrace(); // restore grace on top for next back press
+        pushGrace(); // restore GRACE so next back is intercepted
         this._paint();
         return;
       }
 
-      // ── At root level: e.state tells us what was on top ──────────────
-      if (s === "grace") {
-        if (!this._warnActive) {
-          // First back at root: show toast, re-push grace, arm timer
-          pushGrace();
-          this._warnActive = true;
-          this._toast("Press back again to exit", "error");
-          clearTimeout(this._backGraceTimer);
-          this._backGraceTimer = setTimeout(() => { this._warnActive = false; }, 3000);
-        } else {
-          // Second back within grace: EXIT — do not re-push grace
-          this._warnActive = false;
-          clearTimeout(this._backGraceTimer);
-          // Stack is now HA's entries — HA handles exit naturally
-        }
-        return;
+      // Case B/C: no sub-view → GRACE was on top and was just popped
+      // e.state is HA's entry below GRACE (not "grace").
+      // This is the root-level back press — apply grace logic.
+      if (!this._warnActive) {
+        // First press at root: show toast, re-push GRACE, arm timer
+        pushGrace();
+        this._warnActive = true;
+        this._toast("Press back again to exit", "error");
+        clearTimeout(this._backGraceTimer);
+        this._backGraceTimer = setTimeout(() => { this._warnActive = false; }, 3000);
+      } else {
+        // Second press within grace window: EXIT
+        // Do NOT re-push GRACE — HA's entries are now exposed, HA exits naturally
+        this._warnActive = false;
+        clearTimeout(this._backGraceTimer);
       }
-
-      // HA's own entry was popped (shouldn't normally happen): restore grace
-      pushGrace();
     });
   }
 
