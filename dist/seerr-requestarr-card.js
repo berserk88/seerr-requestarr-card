@@ -897,58 +897,29 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   async _loadDiscover(page = 1) {
+    // Page 1: full repaint is fine (new section/tab, no scroll to preserve)
+    // Page > 1: always delegate to _loadDiscoverGrid which handles scroll correctly
+    if (page > 1) { this._loadDiscoverGrid(page); return; }
+
+    if (this._discLoading) return;
     this._discLoading = true;
     this._discError   = null;
-    if (page === 1) { this._discData = []; this._paint(); }
-    else {
-      const footer = this.shadowRoot.querySelector(".disc-footer");
-      if (footer) footer.innerHTML = `<div class="spinner" style="width:22px;height:22px;margin:0 auto"></div>`;
-    }
+    this._discData    = [];
+    this._paint(); // full paint to show spinner
     try {
       const sections = DISCOVER_SECTIONS[this._discType];
       const sec      = sections.find(s => s.id === this._discSection) || sections[0];
-      const params   = { ...sec.params, page };
-      const data     = await this._get(sec.path, params);
+      const data     = await this._get(sec.path, { ...sec.params, page: 1 });
       const results  = data.results || [];
-      if (page === 1) {
-        this._discData = results;
-        this._discDone = results.length < 20;
-        this._discPage = 1;
-        this._discLoading = false;
-        this._paint();
-        // Eagerly fetch ratings for first page
-        this._fetchRatingsForItems(results);
-        return;
-      }
-      this._discData.push(...results);
+      this._discData = results;
       this._discDone = results.length < 20;
-      this._discPage = page;
+      this._discPage = 1;
       this._discLoading = false;
-      // Surgical append
-      const grid = this.shadowRoot.querySelector(".disc-grid .poster-grid");
-      if (grid) {
-        const frag = document.createDocumentFragment();
-        results.forEach(item => {
-          const tmp = document.createElement("div");
-          tmp.innerHTML = this._ratingCardHtml(item);
-          const card = tmp.firstElementChild;
-          card.addEventListener("click", () => this._openDiscoverDetail(card));
-          frag.appendChild(card);
-        });
-        grid.appendChild(frag);
-      }
-      const footer2 = this.shadowRoot.querySelector(".disc-footer");
-      if (footer2) {
-        footer2.innerHTML = this._discDone ? "" : `<button class="retry-btn" data-action="disc-more">Load more</button>`;
-        footer2.querySelector("[data-action='disc-more']")?.addEventListener("click", () =>
-          this._loadDiscover(this._discPage + 1));
-      }
+      this._paint();
       this._fetchRatingsForItems(results);
     } catch (e) {
       this._discLoading = false;
       this._discError   = e.message;
-      const footer = this.shadowRoot.querySelector(".disc-footer");
-      if (footer) footer.innerHTML = `<button class="retry-btn" data-action="disc-more">Retry</button>`;
       this._paint();
     }
   }
