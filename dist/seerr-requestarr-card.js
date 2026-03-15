@@ -810,70 +810,89 @@ class SeerrRequestarrCard extends HTMLElement {
   // Surgically update only .disc-grid, leaving .disc-controls (and its
   // scroll position) completely untouched. Used for section/genre switches.
   async _loadDiscoverGrid(page = 1) {
+    // Guard: ignore if already loading (prevents double-tap scroll jump)
+    if (this._discLoading) return;
     this._discLoading = true;
+
     const grid = this.shadowRoot.querySelector(".disc-grid");
-    if (grid && page === 1) {
-      grid.innerHTML = `<div class="state-box"><div class="spinner"></div><span>Loading…</span></div>`;
-    } else if (page > 1) {
-      const footer = this.shadowRoot.querySelector(".disc-footer");
-      if (footer) footer.innerHTML = `<div class="spinner" style="width:22px;height:22px;margin:0 auto"></div>`;
+
+    if (page === 1) {
+      // Full replace — show spinner, scroll position irrelevant
+      if (grid) grid.innerHTML = `<div class="state-box"><div class="spinner"></div><span>Loading…</span></div>`;
+    } else {
+      // Load more — just show spinner in footer, DON'T touch the grid
+      const footer = grid?.querySelector(".disc-footer");
+      if (footer) {
+        footer.innerHTML = `<div class="spinner" style="width:22px;height:22px;margin:0 auto"></div>`;
+      }
     }
+
     try {
       const sections = DISCOVER_SECTIONS[this._discType];
       const sec      = sections.find(s => s.id === this._discSection) || sections[0];
       const params   = { ...sec.params, page };
       const data     = await this._get(sec.path, params);
       const results  = data.results || [];
+
       if (page === 1) {
         this._discData = results;
-        this._discDone = results.length < 20;
-        this._discPage = 1;
       } else {
         this._discData.push(...results);
-        this._discDone = results.length < 20;
-        this._discPage = page;
       }
+      this._discDone = results.length < 20;
+      this._discPage = page;
       this._discLoading = false;
-      this._fetchRatingsForItems(results);
-      // Rebuild grid content in place
-      if (grid) {
-        if (page === 1) {
-          const footer = !this._discDone
-            ? `<div class="disc-footer"><button class="retry-btn" data-action="disc-more">Load more</button></div>`
-            : `<div class="disc-footer"></div>`;
-          grid.innerHTML = `<div class="poster-grid">${this._discData.map(i => this._ratingCardHtml(i)).join("")}</div>${footer}`;
-          // Re-bind cards and load-more in the new grid
-          grid.querySelectorAll(".rating-card").forEach(c =>
-            c.addEventListener("click", () => this._openDiscoverDetail(c)));
-          grid.querySelector("[data-action='disc-more']")?.addEventListener("click", () =>
-            this._loadDiscoverGrid(this._discPage + 1));
-        } else {
-          // Append new cards
-          const posterGrid = grid.querySelector(".poster-grid");
-          if (posterGrid) {
-            const frag = document.createDocumentFragment();
-            results.forEach(item => {
-              const tmp = document.createElement("div");
-              tmp.innerHTML = this._ratingCardHtml(item);
-              const card = tmp.firstElementChild;
-              card.addEventListener("click", () => this._openDiscoverDetail(card));
-              frag.appendChild(card);
-            });
-            posterGrid.appendChild(frag);
-          }
-          const footer2 = grid.querySelector(".disc-footer");
-          if (footer2) {
-            footer2.innerHTML = this._discDone ? "" : `<button class="retry-btn" data-action="disc-more">Load more</button>`;
-            footer2.querySelector("[data-action='disc-more']")?.addEventListener("click", () =>
-              this._loadDiscoverGrid(this._discPage + 1));
-          }
+
+      // ── Render ────────────────────────────────────────────────────────
+      const liveGrid = this.shadowRoot.querySelector(".disc-grid");
+      if (!liveGrid) return;
+
+      const bindFooter = (container) => {
+        container.querySelector("[data-action='disc-more']")
+          ?.addEventListener("click", () => this._loadDiscoverGrid(this._discPage + 1));
+      };
+
+      if (page === 1) {
+        // Full grid rebuild
+        const footerHtml = this._discDone
+          ? `<div class="disc-footer"></div>`
+          : `<div class="disc-footer"><button class="retry-btn" data-action="disc-more">Load more</button></div>`;
+        liveGrid.innerHTML = `<div class="poster-grid">${this._discData.map(i => this._ratingCardHtml(i)).join("")}</div>${footerHtml}`;
+        liveGrid.querySelectorAll(".rating-card").forEach(c =>
+          c.addEventListener("click", () => this._openDiscoverDetail(c)));
+        bindFooter(liveGrid);
+      } else {
+        // Append new cards to existing grid (scroll position preserved)
+        const posterGrid = liveGrid.querySelector(".poster-grid");
+        if (posterGrid) {
+          const frag = document.createDocumentFragment();
+          results.forEach(item => {
+            const tmp = document.createElement("div");
+            tmp.innerHTML = this._ratingCardHtml(item);
+            const card = tmp.firstElementChild;
+            card.addEventListener("click", () => this._openDiscoverDetail(card));
+            frag.appendChild(card);
+          });
+          posterGrid.appendChild(frag);
+        }
+        const footer2 = liveGrid.querySelector(".disc-footer");
+        if (footer2) {
+          footer2.innerHTML = this._discDone
+            ? ""
+            : `<button class="retry-btn" data-action="disc-more">Load more</button>`;
+          bindFooter(liveGrid);
         }
       }
+
+      // Fetch ratings AFTER cards are in the DOM so _updateRatingBadge works.
+      // Don't await — let it fill in asynchronously without blocking.
+      this._fetchRatingsForItems(results);
+
     } catch (e) {
       this._discLoading = false;
       this._discError   = e.message;
-      const grid2 = this.shadowRoot.querySelector(".disc-grid");
-      if (grid2) grid2.innerHTML = this._stateHtml("⚠️", "Could not load", e.message, "discover");
+      const g = this.shadowRoot.querySelector(".disc-grid");
+      if (g) g.innerHTML = this._stateHtml("⚠️", "Could not load", e.message, "discover");
     }
   }
 
