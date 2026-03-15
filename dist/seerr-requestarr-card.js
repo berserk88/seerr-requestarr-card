@@ -1,3 +1,4 @@
+/** @version 1.2.0 */
 /**
  * Seerr Requestarr Card for Home Assistant
  * https://github.com/berserk88/seerr-requestarr-card
