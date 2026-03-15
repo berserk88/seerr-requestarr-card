@@ -20,20 +20,44 @@ const TMDB_W = "https://image.tmdb.org/t/p/";
 // We use Overseerr's own ratings endpoint — no external API key required for RT/IMDb scores
 // OMDb key is optional and enables richer IMDb vote count data on tiles
 
-// Overseerr Discover page sections (mirrors the actual Discover UI)
+// Overseerr Discover page sections.
+// Top genres by popularity (TMDB genre IDs):
+//   Movies: Action=28, Comedy=35, Drama=18, Horror=27, Sci-Fi=878,
+//           Animation=16, Romance=10749, Thriller=53, Crime=80, Documentary=99
+//   TV:     Drama=18, Comedy=35, Action/Adventure=10759, Sci-Fi/Fantasy=10765,
+//           Crime=80, Animation=16, Mystery=9648, Reality=10764,
+//           Documentary=99, Family=10751
 const DISCOVER_SECTIONS = {
   movies: [
     { id: "popular",    label: "Popular",         path: "/discover/movies",          params: {} },
+    { id: "toprated",   label: "Top Rated",       path: "/discover/movies",          params: { sortBy: "vote_average.desc" } },
     { id: "upcoming",   label: "Upcoming",        path: "/discover/movies/upcoming", params: {} },
-    { id: "toprated",   label: "Top Rated",       path: "/discover/movies",          params: { sortBy: "vote_average.desc", "vote_count.gte": 200 } },
     { id: "nowplaying", label: "Now Playing",     path: "/discover/movies",          params: { primaryReleaseDateGte: new Date(Date.now()-30*24*60*60*1000).toISOString().slice(0,10) } },
+    { id: "g-action",   label: "Action",          path: "/discover/movies",          params: { genre: "28" } },
+    { id: "g-comedy",   label: "Comedy",          path: "/discover/movies",          params: { genre: "35" } },
+    { id: "g-drama",    label: "Drama",           path: "/discover/movies",          params: { genre: "18" } },
+    { id: "g-horror",   label: "Horror",          path: "/discover/movies",          params: { genre: "27" } },
+    { id: "g-scifi",    label: "Sci-Fi",          path: "/discover/movies",          params: { genre: "878" } },
+    { id: "g-anim",     label: "Animation",       path: "/discover/movies",          params: { genre: "16" } },
+    { id: "g-romance",  label: "Romance",         path: "/discover/movies",          params: { genre: "10749" } },
+    { id: "g-thriller", label: "Thriller",        path: "/discover/movies",          params: { genre: "53" } },
+    { id: "g-crime",    label: "Crime",           path: "/discover/movies",          params: { genre: "80" } },
+    { id: "g-doc",      label: "Documentary",     path: "/discover/movies",          params: { genre: "99" } },
   ],
   tv: [
-    { id: "popular",  label: "Popular",           path: "/discover/tv",              params: {} },
-    { id: "toprated", label: "Top Rated",         path: "/discover/tv",              params: { sortBy: "vote_average.desc", "vote_count.gte": 100 } },
-    { id: "airing",   label: "Airing Today",      path: "/discover/tv/upcoming",     params: {} },
-    { id: "drama",    label: "Drama",             path: "/discover/tv",              params: { genre: "18" } },
-    { id: "comedy",   label: "Comedy",            path: "/discover/tv",              params: { genre: "35" } },
+    { id: "popular",    label: "Popular",         path: "/discover/tv",              params: {} },
+    { id: "toprated",   label: "Top Rated",       path: "/discover/tv",              params: { sortBy: "vote_average.desc" } },
+    { id: "airing",     label: "Airing Today",    path: "/discover/tv/upcoming",     params: {} },
+    { id: "g-drama",    label: "Drama",           path: "/discover/tv",              params: { genre: "18" } },
+    { id: "g-comedy",   label: "Comedy",          path: "/discover/tv",              params: { genre: "35" } },
+    { id: "g-action",   label: "Action & Adv.",   path: "/discover/tv",              params: { genre: "10759" } },
+    { id: "g-scifi",    label: "Sci-Fi & Fantasy",path: "/discover/tv",              params: { genre: "10765" } },
+    { id: "g-crime",    label: "Crime",           path: "/discover/tv",              params: { genre: "80" } },
+    { id: "g-anim",     label: "Animation",       path: "/discover/tv",              params: { genre: "16" } },
+    { id: "g-mystery",  label: "Mystery",         path: "/discover/tv",              params: { genre: "9648" } },
+    { id: "g-reality",  label: "Reality",         path: "/discover/tv",              params: { genre: "10764" } },
+    { id: "g-doc",      label: "Documentary",     path: "/discover/tv",              params: { genre: "99" } },
+    { id: "g-family",   label: "Family",          path: "/discover/tv",              params: { genre: "10751" } },
   ],
 };
 
@@ -209,6 +233,8 @@ const CSS = `
   .card-title {
     font-size: 10px; font-weight: 500; line-height: 1.3;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 3px;
+    /* Reserve space for exactly 2 lines so all cards have identical info height */
+    min-height: calc(1.3em * 2);
   }
   .card-meta { font-size: 9px; color: var(--muted); display: flex; align-items: center; justify-content: space-between; }
   .type-badge {
@@ -226,6 +252,7 @@ const CSS = `
   .trend-title {
     font-size: 9px; font-weight: 500; line-height: 1.3;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    min-height: calc(1.3em * 2);
   }
   .trend-year { font-size: 8px; color: var(--muted); margin-top: 2px; }
 
@@ -407,9 +434,16 @@ const CSS = `
   .disc-sec-btn {
     background: var(--surf2); border: 1px solid var(--border);
     border-radius: 20px; padding: 4px 11px; font-size: 10px; font-weight: 500;
-    color: var(--muted); cursor: pointer; transition: all .18s; white-space: nowrap;
+    color: var(--muted); cursor: pointer; transition: all .18s; white-space: nowrap; flex-shrink: 0;
   }
   .disc-sec-btn.active { background: rgba(232,136,0,.15); border-color: rgba(232,136,0,.4); color: var(--accent); }
+  /* Genre pills: slightly different tint to distinguish from core sections */
+  .disc-genre-btn { background: rgba(124,92,191,.1); border-color: rgba(124,92,191,.2); }
+  .disc-genre-btn.active { background: rgba(124,92,191,.25); border-color: rgba(124,92,191,.5); color: #c0a8f0; }
+  .disc-sec-divider {
+    color: var(--border); font-size: 14px; line-height: 1;
+    display: flex; align-items: center; padding: 0 4px; flex-shrink: 0; user-select: none;
+  }
   .disc-grid {
     flex: 1; overflow-y: auto; padding: 10px 14px 14px; min-height: 0;
     scrollbar-width: thin; scrollbar-color: var(--border) transparent;
@@ -1059,9 +1093,17 @@ class SeerrRequestarrCard extends HTMLElement {
       { k: "tv",     l: "📺 TV Shows" },
     ].map(t => `<button class="disc-type-btn${this._discType===t.k?" active":""}" data-dtype="${t.k}">${t.l}</button>`).join("");
 
-    const secButtons = sections.map(s =>
-      `<button class="disc-sec-btn${this._discSection===s.id?" active":""}" data-dsec="${s.id}">${s.label}</button>`
-    ).join("");
+    // Split into core sections and genre sections (genre IDs start with "g-")
+    const coreSecs  = sections.filter(s => !s.id.startsWith("g-"));
+    const genreSecs = sections.filter(s =>  s.id.startsWith("g-"));
+    const secButtons =
+      coreSecs.map(s =>
+        `<button class="disc-sec-btn${this._discSection===s.id?" active":""}" data-dsec="${s.id}">${s.label}</button>`
+      ).join("") +
+      (genreSecs.length ? `<span class="disc-sec-divider">|</span>` : "") +
+      genreSecs.map(s =>
+        `<button class="disc-sec-btn disc-genre-btn${this._discSection===s.id?" active":""}" data-dsec="${s.id}">${s.label}</button>`
+      ).join("");
 
     const footer = !this._discDone
       ? `<div class="disc-footer">${this._discLoading
