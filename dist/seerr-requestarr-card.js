@@ -7,11 +7,41 @@
  *   card_height:             CSS height (default: "580px")
  *   trending_movies_count:   titles to show in movies row (default: 20)
  *   trending_tv_count:       titles to show in TV row     (default: 20)
+ *   omdb_api_key:            OMDb API key for IMDb/RT ratings on tiles
+ *                            Get a free key at https://www.omdbapi.com/apikey.aspx
  */
 
 const PROXY  = "/api/seerr_proxy";
 const DEBUG  = "/api/seerr_debug";
 const TMDB_W = "https://image.tmdb.org/t/p/";
+
+// Overseerr /movie/{id}/ratings  returns: { rtCriticsScore, rtAudienceScore, imdbRating, imdbId }
+// OMDb API (free, 1000/day): https://www.omdbapi.com/?i={imdbId}&apikey={key}
+// We use Overseerr's own ratings endpoint — no external API key required for RT/IMDb scores
+// OMDb key is optional and enables richer IMDb vote count data on tiles
+
+// Overseerr Discover page sections (mirrors the actual Discover UI)
+const DISCOVER_SECTIONS = {
+  movies: [
+    { id: "popular",    label: "Popular",         path: "/discover/movies",          params: {} },
+    { id: "upcoming",   label: "Upcoming",        path: "/discover/movies/upcoming", params: {} },
+    { id: "toprated",   label: "Top Rated",       path: "/discover/movies",          params: { sortBy: "vote_average.desc", "vote_count.gte": 200 } },
+    { id: "nowplaying", label: "Now Playing",     path: "/discover/movies",          params: { primaryReleaseDateGte: new Date(Date.now()-30*24*60*60*1000).toISOString().slice(0,10) } },
+  ],
+  tv: [
+    { id: "popular",  label: "Popular",           path: "/discover/tv",              params: {} },
+    { id: "toprated", label: "Top Rated",         path: "/discover/tv",              params: { sortBy: "vote_average.desc", "vote_count.gte": 100 } },
+    { id: "airing",   label: "Airing Today",      path: "/discover/tv/upcoming",     params: {} },
+    { id: "drama",    label: "Drama",             path: "/discover/tv",              params: { genre: "18" } },
+    { id: "comedy",   label: "Comedy",            path: "/discover/tv",              params: { genre: "35" } },
+  ],
+};
+
+// RT freshness helper
+const RT_LABEL = score => score >= 75 ? { label: "Fresh", color: "#f84" }
+               : score >= 60 ? { label: "Fresh", color: "#f84" }
+               : { label: "Rotten", color: "#e44" };
+const RT_CERT  = score => score >= 75;
 
 const AVAIL = {
   1: { label: "Unknown",    color: "#6b7280", icon: "❓" },
@@ -326,6 +356,79 @@ const CSS = `
   .retry-btn:hover { border-color: var(--accent); }
   .dbg-link { font-size: 10px; color: var(--muted); text-decoration: underline; cursor: pointer; margin-top: 2px; }
 
+  /* ── Rating bar on cards ── */
+  .rating-bar {
+    display: flex; flex-wrap: wrap; gap: 3px; padding: 4px 6px 5px;
+    border-top: 1px solid var(--border); min-height: 22px; background: rgba(0,0,0,.25);
+  }
+  .rb-item {
+    font-size: 8px; font-weight: 600; white-space: nowrap;
+    background: rgba(255,255,255,.06); border-radius: 3px; padding: 1px 4px;
+    color: var(--text);
+  }
+  .rb-tmdb { color: #e88800; }
+  .rb-imdb { color: #f5c518; }
+  .rb-rt   { }
+  .rb-rta  { color: #a8d8a8; }
+
+  /* ── Discover tab ── */
+  .disc-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .disc-controls {
+    display: flex; flex-direction: column; gap: 0; flex-shrink: 0;
+    border-bottom: 1px solid var(--border); background: var(--surf);
+  }
+  .disc-type-row {
+    display: flex; padding: 8px 14px 0; gap: 6px;
+  }
+  .disc-type-btn {
+    background: none; border: none; color: var(--muted);
+    font-family: var(--body); font-size: 12px; font-weight: 600;
+    padding: 6px 14px 8px; cursor: pointer;
+    border-bottom: 2px solid transparent; transition: all .2s; margin-bottom: -1px;
+  }
+  .disc-type-btn:hover { color: var(--text); }
+  .disc-type-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .disc-section-row {
+    display: flex; gap: 5px; padding: 7px 14px; overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .disc-section-row::-webkit-scrollbar { display: none; }
+  .disc-sec-btn {
+    background: var(--surf2); border: 1px solid var(--border);
+    border-radius: 20px; padding: 4px 11px; font-size: 10px; font-weight: 500;
+    color: var(--muted); cursor: pointer; transition: all .18s; white-space: nowrap;
+  }
+  .disc-sec-btn.active { background: rgba(232,136,0,.15); border-color: rgba(232,136,0,.4); color: var(--accent); }
+  .disc-grid {
+    flex: 1; overflow-y: auto; padding: 10px 14px 14px; min-height: 0;
+    scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+  }
+  .disc-grid::-webkit-scrollbar { width: 3px; }
+  .disc-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  /* Rating card — slightly wider to fit rating bar */
+  .rating-card {
+    background: var(--surf2); border: 1px solid var(--border);
+    border-radius: 9px; overflow: hidden; cursor: pointer; transition: all .18s; position: relative;
+  }
+  .rating-card:hover { border-color: rgba(232,136,0,.5); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.45); }
+  .rating-card img { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; background: var(--surf); }
+  .rating-card .no-poster { width: 100%; aspect-ratio: 2/3; }
+  .rating-card .card-info { padding: 5px 6px 0; }
+  .disc-footer { display: flex; justify-content: center; padding: 10px 0 4px; }
+
+  /* Ratings in detail view */
+  .detail-ratings {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;
+  }
+  .rating-block {
+    background: var(--surf2); border: 1px solid var(--border);
+    border-radius: 9px; padding: 9px 12px; display: flex; flex-direction: column;
+    align-items: center; min-width: 70px; flex: 1;
+  }
+  .rating-logo { font-size: 14px; margin-bottom: 3px; }
+  .rating-score { font-family: var(--disp); font-size: 18px; font-weight: 800; line-height: 1; }
+  .rating-sublabel { font-size: 9px; color: var(--muted); margin-top: 2px; text-align: center; }
+
   /* ── Toast ── */
   .toast {
     position: absolute; bottom: 12px; left: 50%;
@@ -377,10 +480,19 @@ class SeerrRequestarrCard extends HTMLElement {
     this._reqError      = null;
     this._pending       = 0;
     this._total         = 0;
+    // Discover tab state
+    this._discType      = "movies";   // "movies" | "tv"
+    this._discSection   = "popular";  // section id
+    this._discData      = [];
+    this._discLoading   = false;
+    this._discError     = null;
+    this._discPage      = 1;
+    this._discDone      = false;
+    this._ratingsCache  = {};         // tmdbId -> ratings object
   }
 
   static getStubConfig() {
-    return { card_width: "100%", card_height: "580px", trending_movies_count: 20, trending_tv_count: 20 };
+    return { card_width: "100%", card_height: "580px", trending_movies_count: 20, trending_tv_count: 20, omdb_api_key: "" };
   }
 
   setConfig(cfg) {
@@ -402,6 +514,7 @@ class SeerrRequestarrCard extends HTMLElement {
       this._initialized = true;
       this._loadTrending();
       this._loadRequests();
+      this._loadDiscover(1);
     }
     this._syncStats();
   }
@@ -477,6 +590,8 @@ class SeerrRequestarrCard extends HTMLElement {
       ]);
       this._trendMovies = movies;
       this._trendTV     = tv;
+      // Prefetch ratings for trending cards (movies only — Overseerr ratings endpoint is movies)
+      this._fetchRatingsForItems([...movies, ...tv]);
     } catch (e) {
       this._trendError = e.message;
     } finally {
@@ -580,11 +695,16 @@ class SeerrRequestarrCard extends HTMLElement {
     this._detail        = media;
     this._detailFull    = null;
     this._detailLoading = true;
-    this._browseDetail  = null; // clear any browse detail
+    this._browseDetail  = null;
     this._paint();
     try {
       const path = media.mediaType === "movie" ? `/movie/${media.id}` : `/tv/${media.id}`;
-      this._detailFull = await this._get(path);
+      const [full, ratings] = await Promise.all([
+        this._get(path),
+        this._get(path + "/ratings").catch(() => null),
+      ]);
+      if (ratings) this._ratingsCache[media.id] = ratings;
+      this._detailFull = { ...full, _ratings: ratings };
     } catch (e) {
       this._detailFull = media;
     } finally {
@@ -607,6 +727,136 @@ class SeerrRequestarrCard extends HTMLElement {
       this._toast("Request failed: " + e.message, "error");
       if (btn) { btn.disabled = false; btn.textContent = "🎬 Request This"; }
     }
+  }
+
+  // ── Discover loaders ──────────────────────────────────────────────────────
+
+  async _loadDiscover(page = 1) {
+    this._discLoading = true;
+    this._discError   = null;
+    if (page === 1) { this._discData = []; this._paint(); }
+    else {
+      const footer = this.shadowRoot.querySelector(".disc-footer");
+      if (footer) footer.innerHTML = `<div class="spinner" style="width:22px;height:22px;margin:0 auto"></div>`;
+    }
+    try {
+      const sections = DISCOVER_SECTIONS[this._discType];
+      const sec      = sections.find(s => s.id === this._discSection) || sections[0];
+      const params   = { ...sec.params, page };
+      const data     = await this._get(sec.path, params);
+      const results  = data.results || [];
+      if (page === 1) {
+        this._discData = results;
+        this._discDone = results.length < 20;
+        this._discPage = 1;
+        this._discLoading = false;
+        this._paint();
+        // Eagerly fetch ratings for first page
+        this._fetchRatingsForItems(results);
+        return;
+      }
+      this._discData.push(...results);
+      this._discDone = results.length < 20;
+      this._discPage = page;
+      this._discLoading = false;
+      // Surgical append
+      const grid = this.shadowRoot.querySelector(".disc-grid .poster-grid");
+      if (grid) {
+        const frag = document.createDocumentFragment();
+        results.forEach(item => {
+          const tmp = document.createElement("div");
+          tmp.innerHTML = this._ratingCardHtml(item);
+          const card = tmp.firstElementChild;
+          card.addEventListener("click", () => this._openDiscoverDetail(card));
+          frag.appendChild(card);
+        });
+        grid.appendChild(frag);
+      }
+      const footer2 = this.shadowRoot.querySelector(".disc-footer");
+      if (footer2) {
+        footer2.innerHTML = this._discDone ? "" : `<button class="retry-btn" data-action="disc-more">Load more</button>`;
+        footer2.querySelector("[data-action='disc-more']")?.addEventListener("click", () =>
+          this._loadDiscover(this._discPage + 1));
+      }
+      this._fetchRatingsForItems(results);
+    } catch (e) {
+      this._discLoading = false;
+      this._discError   = e.message;
+      const footer = this.shadowRoot.querySelector(".disc-footer");
+      if (footer) footer.innerHTML = `<button class="retry-btn" data-action="disc-more">Retry</button>`;
+      this._paint();
+    }
+  }
+
+  async _fetchRatingsForItems(items) {
+    // Fetch Overseerr's ratings endpoint for each item in parallel (batched)
+    // Results cached in this._ratingsCache[tmdbId]
+    await Promise.all(
+      items
+        .filter(item => (item.mediaType === "movie" || item.mediaType === undefined) && !this._ratingsCache[item.id])
+        .map(async item => {
+          try {
+            const path = item.mediaType === "tv" ? `/tv/${item.id}/ratings` : `/movie/${item.id}/ratings`;
+            const r = await this._get(path);
+            this._ratingsCache[item.id] = r;
+            // Surgically update any visible rating badges for this card
+            this._updateRatingBadge(item.id, r);
+          } catch {}
+        })
+    );
+  }
+
+  _updateRatingBadge(tmdbId, ratings) {
+    const card = this.shadowRoot.querySelector(`[data-id="${tmdbId}"]`);
+    if (!card) return;
+    const rb = card.querySelector(".rating-bar");
+    if (rb) rb.outerHTML = this._ratingBarHtml(ratings);
+  }
+
+  _ratingBarHtml(r) {
+    if (!r) return `<div class="rating-bar"></div>`;
+    const parts = [];
+    if (r.tmdbRating || r.voteAverage) {
+      const v = r.tmdbRating || r.voteAverage;
+      parts.push(`<span class="rb-item rb-tmdb" title="TMDB">⭐ ${Number(v).toFixed(1)}</span>`);
+    }
+    if (r.imdbRating) {
+      parts.push(`<span class="rb-item rb-imdb" title="IMDb">🎬 ${r.imdbRating}</span>`);
+    }
+    if (r.rtCriticsScore != null) {
+      const fresh = RT_CERT(r.rtCriticsScore);
+      parts.push(`<span class="rb-item rb-rt" title="RT Critics" style="color:${fresh?"#f84":"#e44"}">${fresh?"🍅":"🤢"} ${r.rtCriticsScore}%</span>`);
+    }
+    if (r.rtAudienceScore != null) {
+      parts.push(`<span class="rb-item rb-rta" title="RT Audience">🍿 ${r.rtAudienceScore}%</span>`);
+    }
+    return `<div class="rating-bar">${parts.join("")}</div>`;
+  }
+
+  _openDiscoverDetail(card) {
+    const id   = parseInt(card.dataset.id);
+    const type = card.dataset.type;
+    const m    = this._discData.find(x => x.id === id);
+    if (!m) return;
+    // Use browse detail state so back returns to discover
+    this._browseDetail        = { ...m, mediaType: type || m.mediaType };
+    this._browseDetailFull    = null;
+    this._browseDetailLoading = true;
+    this._paint();
+    const path = (type === "tv" || m.mediaType === "tv") ? `/tv/${m.id}` : `/movie/${m.id}`;
+    Promise.all([
+      this._get(path),
+      this._get(path + "/ratings").catch(() => null),
+    ]).then(([full, ratings]) => {
+      if (ratings) this._ratingsCache[m.id] = ratings;
+      this._browseDetailFull    = { ...full, _ratings: ratings };
+      this._browseDetailLoading = false;
+      this._paint();
+    }).catch(() => {
+      this._browseDetailFull    = m;
+      this._browseDetailLoading = false;
+      this._paint();
+    });
   }
 
   async _search() {
@@ -648,6 +898,46 @@ class SeerrRequestarrCard extends HTMLElement {
     return `<div class="avail-dot" style="background:${s.color}28;color:${s.color};border:1px solid ${s.color}44">${s.icon}</div>`;
   }
 
+  _detailRatingsHtml(m) {
+    // Ratings come from _ratings field injected during detail load,
+    // or from ratingsCache, or from the base tmdb voteAverage
+    const r = m._ratings || this._ratingsCache[m.id] || {};
+    const tmdb = m.voteAverage || r.tmdbRating;
+    const imdb = r.imdbRating;
+    const rtC  = r.rtCriticsScore;
+    const rtA  = r.rtAudienceScore;
+    if (!tmdb && !imdb && !rtC && !rtA) return "";
+    const blocks = [];
+    if (tmdb) blocks.push(`
+      <div class="rating-block">
+        <div class="rating-logo">⭐</div>
+        <div class="rating-score" style="color:#e88800">${Number(tmdb).toFixed(1)}</div>
+        <div class="rating-sublabel">TMDB</div>
+      </div>`);
+    if (imdb) blocks.push(`
+      <div class="rating-block">
+        <div class="rating-logo">🎬</div>
+        <div class="rating-score" style="color:#f5c518">${imdb}</div>
+        <div class="rating-sublabel">IMDb</div>
+      </div>`);
+    if (rtC != null) {
+      const fresh = RT_CERT(rtC);
+      blocks.push(`
+        <div class="rating-block">
+          <div class="rating-logo">${fresh ? "🍅" : "🤢"}</div>
+          <div class="rating-score" style="color:${fresh?"#f84":"#e44"}">${rtC}%</div>
+          <div class="rating-sublabel">RT Critics</div>
+        </div>`);
+    }
+    if (rtA != null) blocks.push(`
+      <div class="rating-block">
+        <div class="rating-logo">🍿</div>
+        <div class="rating-score" style="color:#a8d8a8">${rtA}%</div>
+        <div class="rating-sublabel">RT Audience</div>
+      </div>`);
+    return blocks.length ? `<div class="detail-ratings">${blocks.join("")}</div>` : "";
+  }
+
   _runtime(m) {
     const r = m?.runtime;
     if (!r) return null;
@@ -687,6 +977,32 @@ class SeerrRequestarrCard extends HTMLElement {
       </div>`;
   }
 
+  // Rating card — used in Discover tab, shows rating bar under poster
+  _ratingCardHtml(item) {
+    const p     = this._img(item.posterPath, "w185");
+    const year  = this._year(item);
+    const ico   = item.mediaType === "tv" ? "📺" : "🎬";
+    const type  = item.mediaType === "tv" ? "TV" : "Film";
+    const cached = this._ratingsCache[item.id];
+    // Show TMDB score immediately from list data; RT/IMDb fill in when fetched
+    const tmdbScore = item.voteAverage ? Number(item.voteAverage).toFixed(1) : null;
+    const ratingBar = cached
+      ? this._ratingBarHtml(cached)
+      : (tmdbScore
+          ? `<div class="rating-bar"><span class="rb-item rb-tmdb" title="TMDB">⭐ ${tmdbScore}</span><span class="rb-item" style="color:var(--muted);font-size:7px">loading…</span></div>`
+          : `<div class="rating-bar"></div>`);
+    return `
+      <div class="rating-card" data-id="${item.id}" data-type="${item.mediaType || 'movie'}">
+        ${this._availBadge(item.mediaInfo)}
+        ${p ? `<img src="${p}" alt="" loading="lazy">` : `<div class="no-poster">${ico}<span>${(item.title||item.name||"").slice(0,18)}</span></div>`}
+        <div class="card-info">
+          <div class="card-title">${item.title || item.name || "Unknown"}</div>
+          <div class="card-meta"><span>${year}</span><span class="type-badge">${type}</span></div>
+        </div>
+        ${ratingBar}
+      </div>`;
+  }
+
   _stateHtml(icon, title, msg, retry) {
     return `<div class="state-box">
       <div class="state-icon">${icon}</div>
@@ -695,6 +1011,45 @@ class SeerrRequestarrCard extends HTMLElement {
       ${retry ? `<button class="retry-btn" data-retry="${retry}">↺ Retry</button>` : ""}
       <span class="dbg-link" data-action="debug">Run diagnostics</span>
     </div>`;
+  }
+
+  // ── Discover tab HTML ─────────────────────────────────────────────────────
+  _discoverHtml() {
+    const sections = DISCOVER_SECTIONS[this._discType];
+    const typeButtons = [
+      { k: "movies", l: "🎬 Movies" },
+      { k: "tv",     l: "📺 TV Shows" },
+    ].map(t => `<button class="disc-type-btn${this._discType===t.k?" active":""}" data-dtype="${t.k}">${t.l}</button>`).join("");
+
+    const secButtons = sections.map(s =>
+      `<button class="disc-sec-btn${this._discSection===s.id?" active":""}" data-dsec="${s.id}">${s.label}</button>`
+    ).join("");
+
+    const footer = !this._discDone
+      ? `<div class="disc-footer">${this._discLoading
+          ? `<div class="spinner" style="width:22px;height:22px"></div>`
+          : `<button class="retry-btn" data-action="disc-more">Load more</button>`}</div>`
+      : `<div class="disc-footer"></div>`;
+
+    let gridContent;
+    if (this._discLoading && !this._discData.length) {
+      gridContent = `<div class="state-box"><div class="spinner"></div><span>Loading…</span></div>`;
+    } else if (this._discError) {
+      gridContent = this._stateHtml("⚠️", "Could not load", this._discError, "discover");
+    } else if (!this._discData.length) {
+      gridContent = `<div class="state-box"><div class="state-icon">🎬</div>No results</div>`;
+    } else {
+      gridContent = `<div class="poster-grid">${this._discData.map(i => this._ratingCardHtml(i)).join("")}</div>${footer}`;
+    }
+
+    return `
+      <div class="disc-wrap">
+        <div class="disc-controls">
+          <div class="disc-type-row">${typeButtons}</div>
+          <div class="disc-section-row">${secButtons}</div>
+        </div>
+        <div class="disc-grid">${gridContent}</div>
+      </div>`;
   }
 
   // ── Trending tab HTML ─────────────────────────────────────────────────────
@@ -819,6 +1174,7 @@ class SeerrRequestarrCard extends HTMLElement {
 
             ${genres.length ? `<div class="genre-row">${genres.map(g => `<div class="genre-chip">${g}</div>`).join("")}</div>` : ""}
 
+            ${this._detailRatingsHtml(m)}
             <div class="detail-section-title">Overview</div>
             <div class="detail-overview">${overview}</div>
 
@@ -840,7 +1196,7 @@ class SeerrRequestarrCard extends HTMLElement {
 
   // ── Search tab HTML ───────────────────────────────────────────────────────
   _searchHtml() {
-    if (this._detail) return this._detailHtml();
+    if (this._detail) return this._detailHtml(this._detailFull || this._detail, this._detailFull, this._detailLoading);
     const chips = [{k:"all",l:"All"},{k:"movie",l:"🎬 Movies"},{k:"tv",l:"📺 TV"}];
     const grid  = this._searching
       ? `<div class="state-box"><div class="spinner"></div><span>Searching…</span></div>`
@@ -919,7 +1275,8 @@ class SeerrRequestarrCard extends HTMLElement {
     }
 
     switch (this._tab) {
-      case "trending": tc.innerHTML = this._trendingHtml(); this._bindTrending(tc); break;
+      case "trending": tc.innerHTML = this._trendingHtml(); this._bindTrending(tc);  break;
+      case "discover": tc.innerHTML = this._discoverHtml(); this._bindDiscover(tc); break;
       case "search":   tc.innerHTML = this._searchHtml();   this._bindSearch(tc);   break;
       case "requests": tc.innerHTML = this._requestsHtml(); this._bindRetry(tc);    break;
     }
@@ -960,8 +1317,12 @@ class SeerrRequestarrCard extends HTMLElement {
     this._paint();
     // Fetch full details
     const path = m.mediaType === "movie" ? `/movie/${m.id}` : `/tv/${m.id}`;
-    this._get(path).then(full => {
-      this._browseDetailFull    = full;
+    Promise.all([
+      this._get(path),
+      this._get(path + "/ratings").catch(() => null),
+    ]).then(([full, ratings]) => {
+      if (ratings) this._ratingsCache[m.id] = ratings;
+      this._browseDetailFull    = { ...full, _ratings: ratings };
       this._browseDetailLoading = false;
       this._paint();
     }).catch(() => {
@@ -981,6 +1342,41 @@ class SeerrRequestarrCard extends HTMLElement {
         this._browsePage = 1;
         this._browseDone = false;
         this._loadBrowse(this._browseMode, 1);
+      })
+    );
+    this._bindRetry(tc);
+  }
+
+  _bindDiscover(tc) {
+    // Type switcher
+    tc.querySelectorAll("[data-dtype]").forEach(btn =>
+      btn.addEventListener("click", () => {
+        if (this._discType === btn.dataset.dtype) return;
+        this._discType    = btn.dataset.dtype;
+        this._discSection = DISCOVER_SECTIONS[this._discType][0].id;
+        this._discData    = []; this._discPage = 1; this._discDone = false;
+        this._loadDiscover(1);
+      })
+    );
+    // Section switcher
+    tc.querySelectorAll("[data-dsec]").forEach(btn =>
+      btn.addEventListener("click", () => {
+        if (this._discSection === btn.dataset.dsec) return;
+        this._discSection = btn.dataset.dsec;
+        this._discData    = []; this._discPage = 1; this._discDone = false;
+        this._loadDiscover(1);
+      })
+    );
+    // Rating cards
+    tc.querySelectorAll(".rating-card").forEach(c =>
+      c.addEventListener("click", () => this._openDiscoverDetail(c)));
+    // Load more
+    tc.querySelector("[data-action='disc-more']")?.addEventListener("click", () =>
+      this._loadDiscover(this._discPage + 1));
+    // Retry
+    tc.querySelectorAll(".retry-btn[data-retry='discover']").forEach(btn =>
+      btn.addEventListener("click", () => {
+        this._discError = null; this._loadDiscover(1);
       })
     );
     this._bindRetry(tc);
@@ -1062,6 +1458,7 @@ class SeerrRequestarrCard extends HTMLElement {
     // Tab order: Trending → Search → Requests
     const tabs = [
       { k: "trending", i: "🔥", l: "Trending"  },
+      { k: "discover", i: "🧭", l: "Discover"  },
       { k: "search",   i: "🔍", l: "Search"    },
       { k: "requests", i: "📋", l: "Requests"  },
     ];
@@ -1094,6 +1491,7 @@ class SeerrRequestarrCard extends HTMLElement {
         this._paint();
         if (this._tab === "requests" && !this._requests.length && !this._reqLoading) this._loadRequests();
         if (this._tab === "trending" && !this._trendMovies.length && !this._trendLoading) this._loadTrending();
+        if (this._tab === "discover" && !this._discData.length && !this._discLoading) this._loadDiscover(1);
       })
     );
     this._paint();
