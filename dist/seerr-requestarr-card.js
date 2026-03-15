@@ -1751,56 +1751,83 @@ class SeerrRequestarrCard extends HTMLElement {
     this._historyBound = true;
     this._warnActive     = false;
     this._backGraceTimer = null;
+    this._handlingBack   = false; // prevents re-entrant popstate handling
 
-    // ── Design ────────────────────────────────────────────────────────────
-    // replaceState marks the CURRENT entry as our sentinel {seerr:'s'}.
-    // pushState adds a blank entry on top for HA to use.
-    // Stack: [BLANK(current)] [SENTINEL] [pre-HA entries...]
+    // ── Robust back-button interception ───────────────────────────────────
     //
-    // When user presses back: BLANK is popped, browser lands on SENTINEL.
-    // popstate fires: e.state = {seerr:'s'} ← we catch this.
+    // ROOT CAUSE of all previous failures:
+    //   HA's internal navigation calls history.pushState, adding entries
+    //   above our sentinel. When HA later navigates or user presses back,
+    //   those entries are consumed first, eventually exposing our sentinel
+    //   or going past it entirely — letting HA exit without our handler.
     //
-    // Sub-view / grace-show path: push new BLANK, handle in JS.
-    // Exit path: replaceState sentinel to {seerr:'exit'}, go(-1).
-    //   → lands on pre-HA, popstate e.state ≠ 's' → ignored → HA exits.
+    // SOLUTION — two-part:
+    //
+    // Part 1: Monkey-patch history.pushState.
+    //   After ANY pushState call (by HA or anyone else), we immediately
+    //   push our sentinel on top again. This guarantees our sentinel is
+    //   ALWAYS the current history entry. Every single back press therefore
+    //   pops our sentinel and fires our handler.
+    //
+    // Part 2: popstate handler handles ALL events (no state filtering).
+    //   Re-entrant guard (_handlingBack) prevents double-handling.
+    //   After handling, re-push sentinel (except on intentional exit).
+    //
+    // Exit path: set _allowExit=true, then call the original pushState
+    //   (bypassing our interceptor) with a dummy entry so the next back
+    //   press lands somewhere HA can navigate normally.
 
-    history.replaceState({ seerr: "s" }, "");
-    history.pushState({}, "");
+    const origPush = history.pushState.bind(history);
 
-    window.addEventListener("popstate", e => {
-      if (e.state?.seerr !== "s") return; // not our sentinel landing — ignore
+    // Intercept pushState — push our sentinel after any external push
+    const self = this;
+    history.pushState = function(state, title, url) {
+      origPush(state, title, url);
+      // Don't push sentinel if we're currently handling a back press
+      // (that handler will re-push sentinel itself)
+      if (!self._handlingBack) {
+        origPush({ seerr: "s" }, "");
+      }
+    };
 
-      // We are now sitting ON the sentinel. BLANK above it was just popped.
+    // Push initial sentinel
+    origPush({ seerr: "s" }, "");
 
-      // ── Sub-view: go back one level ───────────────────────────────────
+    window.addEventListener("popstate", () => {
+      if (this._handlingBack) return; // re-entrant guard
+      this._handlingBack = true;
+
+      // ── Sub-view: go back one level ─────────────────────────────────
       if (this._browseDetail || this._detail || this._browseMode) {
-        history.pushState({}, ""); // new blank — cannot exit from sub-view
         this._cancelGrace();
         this._saveScroll();
         if      (this._browseDetail) { this._browseDetail = null; this._browseDetailFull = null; }
         else if (this._detail)       { this._detail = null; this._detailFull = null; }
         else                         { this._browseMode = null; }
+        origPush({ seerr: "s" }, ""); // re-push sentinel
+        this._handlingBack = false;
         this._paint();
         return;
       }
 
-      // ── Top-level + grace active: EXIT ────────────────────────────────
+      // ── Top-level + grace active: EXIT ───────────────────────────────
       if (this._warnActive) {
         this._warnActive = false;
         clearTimeout(this._backGraceTimer);
-        // Relabel sentinel so the next popstate is NOT caught by us.
-        // Then go(-1) to move back past it — HA handles what comes next.
-        history.replaceState({ seerr: "exit" }, "");
-        history.go(-1);
+        // Do NOT re-push sentinel. Restore origPush so HA can navigate.
+        history.pushState = origPush;
+        this._handlingBack = false;
+        // HA's history stack is now in control — app will exit.
         return;
       }
 
       // ── Top-level + no grace: show toast ─────────────────────────────
-      history.pushState({}, ""); // new blank on top
       this._warnActive = true;
       this._toast("Press back again to exit", "error");
       clearTimeout(this._backGraceTimer);
       this._backGraceTimer = setTimeout(() => { this._warnActive = false; }, 3000);
+      origPush({ seerr: "s" }, ""); // re-push sentinel
+      this._handlingBack = false;
     });
   }
 
