@@ -831,9 +831,10 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   async _fetchRatingsForItems(items) {
-    // Only movies have a /ratings endpoint in Overseerr.
-    // TV shows: we show TMDB voteAverage only (already in list data).
-    // Fetch in small parallel batches to avoid hammering the server.
+    // Overseerr's /movie/{id}/ratings returns RT data only:
+    // { criticsRating, criticsScore, audienceRating, audienceScore }
+    // No IMDb data. IMDb comes from OMDb API if omdb_api_key is configured.
+    // TV shows: TMDB voteAverage only (already in list data, no extra call).
     const movies = items.filter(item =>
       item.mediaType !== "tv" && !this._ratingsCache[item.id]
     );
@@ -841,15 +842,28 @@ class SeerrRequestarrCard extends HTMLElement {
       movies.map(async item => {
         try {
           const r = await this._get(`/movie/${item.id}/ratings`);
-          // Overseerr returns: criticsRating ("Rotten"|"Fresh"|"Certified Fresh"),
-          // criticsScore (number 0-100), audienceRating ("Upright"|"Spilled"),
-          // audienceScore (number 0-100), imdbRating (string like "8.1"),
-          // imdbVotes (string like "1,234,567")
+          // Try OMDb for IMDb rating if key configured and imdbId available
+          if (this._cfg.omdb_api_key && item.externalIds?.imdbId) {
+            const imdb = await this._fetchOmdb(item.externalIds.imdbId);
+            if (imdb) r._imdb = imdb;
+          }
           this._ratingsCache[item.id] = r;
           this._updateRatingBadge(item.id, item.voteAverage, r);
         } catch {}
       })
     );
+  }
+
+  async _fetchOmdb(imdbId) {
+    // OMDb has permissive CORS — call directly from browser, no proxy needed.
+    // Returns the IMDb rating string e.g. "8.1", or null.
+    if (!this._cfg.omdb_api_key || !imdbId) return null;
+    try {
+      const res = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${encodeURIComponent(this._cfg.omdb_api_key)}`);
+      if (!res.ok) return null;
+      const d = await res.json();
+      return (d.Response === "True" && d.imdbRating && d.imdbRating !== "N/A") ? d.imdbRating : null;
+    } catch { return null; }
   }
 
   _updateRatingBadge(tmdbId, tmdbScore, ratings) {
@@ -862,13 +876,16 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   _ratingBarInner(tmdbScore, r) {
-    // Returns the INNER html for .rating-bar (not the wrapper div)
+    // r = Overseerr /movie/{id}/ratings response:
+    //   { criticsRating, criticsScore, audienceRating, audienceScore }
+    // imdbScore = separately fetched via OMDb API (optional, needs config key)
     const parts = [];
     if (tmdbScore) {
       parts.push(`<span class="rb-item rb-tmdb" title="TMDB">⭐ ${Number(tmdbScore).toFixed(1)}</span>`);
     }
-    if (r && r.imdbRating) {
-      parts.push(`<span class="rb-item rb-imdb" title="IMDb">🎬 ${r.imdbRating}</span>`);
+    // IMDb score comes from OMDb — stored separately as r._imdb when available
+    if (r && r._imdb) {
+      parts.push(`<span class="rb-item rb-imdb" title="IMDb">🎬 ${r._imdb}</span>`);
     }
     if (r && r.criticsScore != null) {
       const fresh = r.criticsScore >= 60;
@@ -876,7 +893,6 @@ class SeerrRequestarrCard extends HTMLElement {
       parts.push(`<span class="rb-item rb-rt" title="RT Critics" style="color:${fresh?"#f84":"#e44"}">${cert?"🍅":(fresh?"🍅":"🤢")} ${r.criticsScore}%</span>`);
     }
     if (r && r.audienceScore != null) {
-      const pos = r.audienceScore >= 60;
       parts.push(`<span class="rb-item rb-rta" title="RT Audience">🍿 ${r.audienceScore}%</span>`);
     }
     return parts.join("") || "";
@@ -965,7 +981,7 @@ class SeerrRequestarrCard extends HTMLElement {
     //   imdbVotes: string e.g. "1,234,567"
     const r    = m._ratings || this._ratingsCache[m.id] || null;
     const tmdb = m.voteAverage;
-    const imdb = r?.imdbRating;
+    const imdb = r?._imdb;   // set by OMDb fetch when omdb_api_key is configured
     const rtC  = r?.criticsScore;
     const rtA  = r?.audienceScore;
     if (!tmdb && !imdb && rtC == null && rtA == null) return "";
@@ -1439,13 +1455,21 @@ class SeerrRequestarrCard extends HTMLElement {
         this._loadDiscover(1);
       })
     );
-    // Section switcher
+    // Section switcher — save pill row scroll before re-render, restore after
     tc.querySelectorAll("[data-dsec]").forEach(btn =>
       btn.addEventListener("click", () => {
         if (this._discSection === btn.dataset.dsec) return;
+        // Save horizontal scroll position of the pill row
+        const pillRow = this.shadowRoot.querySelector(".disc-section-row");
+        const savedScroll = pillRow ? pillRow.scrollLeft : 0;
         this._discSection = btn.dataset.dsec;
         this._discData    = []; this._discPage = 1; this._discDone = false;
         this._loadDiscover(1);
+        // Restore scroll position after the DOM updates (next microtask)
+        requestAnimationFrame(() => {
+          const newPillRow = this.shadowRoot.querySelector(".disc-section-row");
+          if (newPillRow) newPillRow.scrollLeft = savedScroll;
+        });
       })
     );
     // Rating cards
