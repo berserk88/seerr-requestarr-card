@@ -735,7 +735,8 @@ class SeerrRequestarrCard extends HTMLElement {
     if (this._reqLoading) return;
     this._reqLoading = true;
     this._reqError   = null;
-    this._paint();
+    // Only show loading spinner if we're actually on the requests tab
+    if (this._tab === "requests") this._paint();
     try {
       const data = await this._get("/request", { take: 25, skip: 0, filter: "all" });
       const raw  = data.results || [];
@@ -761,7 +762,14 @@ class SeerrRequestarrCard extends HTMLElement {
     } finally {
       this._reqLoading = false;
     }
-    this._paint();
+    // Only repaint the full UI if on requests tab — avoids disrupting
+    // surgical updates on other tabs (e.g. discover load-more in progress)
+    if (this._tab === "requests") {
+      this._paint();
+    } else {
+      // Just update the stat counters if visible
+      this._syncStats();
+    }
   }
 
   async _loadDetail(media) {
@@ -1255,12 +1263,15 @@ class SeerrRequestarrCard extends HTMLElement {
 
     let gridContent;
     if (this._discLoading && !this._discData.length) {
+      // Page 1 loading — show full spinner (no data yet)
       gridContent = `<div class="state-box"><div class="spinner"></div><span>Loading…</span></div>`;
     } else if (this._discError) {
       gridContent = this._stateHtml("⚠️", "Could not load", this._discError, "discover");
     } else if (!this._discData.length) {
       gridContent = `<div class="state-box"><div class="state-icon">🎬</div>No results</div>`;
     } else {
+      // Data exists (page>1 load in progress or complete) — always show data
+      // Footer shows spinner if loading, button if not
       gridContent = `<div class="poster-grid">${this._discData.map(i => this._ratingCardHtml(i)).join("")}</div>${footer}`;
     }
 
