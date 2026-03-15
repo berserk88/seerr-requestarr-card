@@ -1752,38 +1752,51 @@ class SeerrRequestarrCard extends HTMLElement {
     this._warnActive     = false;
     this._backGraceTimer = null;
 
-    // ONE sentinel sits above HA's history.
-    // LOGIC (checked in this order on every back press):
-    //   1. Sub-view open → restore sentinel, navigate back in JS
-    //   2. Top-level + grace active → DO NOT restore sentinel → HA exits
-    //   3. Top-level + no grace → restore sentinel, show toast, arm grace
+    // ── Design ────────────────────────────────────────────────────────────
+    // replaceState marks the CURRENT entry as our sentinel {seerr:'s'}.
+    // pushState adds a blank entry on top for HA to use.
+    // Stack: [BLANK(current)] [SENTINEL] [pre-HA entries...]
+    //
+    // When user presses back: BLANK is popped, browser lands on SENTINEL.
+    // popstate fires: e.state = {seerr:'s'} ← we catch this.
+    //
+    // Sub-view / grace-show path: push new BLANK, handle in JS.
+    // Exit path: replaceState sentinel to {seerr:'exit'}, go(-1).
+    //   → lands on pre-HA, popstate e.state ≠ 's' → ignored → HA exits.
 
-    history.pushState({ seerr: "s" }, "");
+    history.replaceState({ seerr: "s" }, "");
+    history.pushState({}, "");
 
-    window.addEventListener("popstate", () => {
+    window.addEventListener("popstate", e => {
+      if (e.state?.seerr !== "s") return; // not our sentinel landing — ignore
 
-      // ── 1. Sub-view: always restore sentinel, go back one level ───────
+      // We are now sitting ON the sentinel. BLANK above it was just popped.
+
+      // ── Sub-view: go back one level ───────────────────────────────────
       if (this._browseDetail || this._detail || this._browseMode) {
-        history.pushState({ seerr: "s" }, ""); // restore — sub-views NEVER exit
+        history.pushState({}, ""); // new blank — cannot exit from sub-view
         this._cancelGrace();
         this._saveScroll();
-        if (this._browseDetail)      { this._browseDetail = null; this._browseDetailFull = null; }
+        if      (this._browseDetail) { this._browseDetail = null; this._browseDetailFull = null; }
         else if (this._detail)       { this._detail = null; this._detailFull = null; }
         else                         { this._browseMode = null; }
         this._paint();
         return;
       }
 
-      // ── 2. Top-level + grace active: EXIT ─────────────────────────────
+      // ── Top-level + grace active: EXIT ────────────────────────────────
       if (this._warnActive) {
         this._warnActive = false;
         clearTimeout(this._backGraceTimer);
-        // Sentinel NOT restored → HA navigates back → app exits
+        // Relabel sentinel so the next popstate is NOT caught by us.
+        // Then go(-1) to move back past it — HA handles what comes next.
+        history.replaceState({ seerr: "exit" }, "");
+        history.go(-1);
         return;
       }
 
-      // ── 3. Top-level + no grace: show toast, restore sentinel ─────────
-      history.pushState({ seerr: "s" }, ""); // restore — not exiting yet
+      // ── Top-level + no grace: show toast ─────────────────────────────
+      history.pushState({}, ""); // new blank on top
       this._warnActive = true;
       this._toast("Press back again to exit", "error");
       clearTimeout(this._backGraceTimer);
