@@ -1752,65 +1752,50 @@ class SeerrRequestarrCard extends HTMLElement {
     this._warnActive     = false;
     this._backGraceTimer = null;
 
-    // Push sentinel entry. Always push it back after every popstate
-    // EXCEPT when we intentionally want to let HA exit.
+    // ONE sentinel sits above HA's history.
+    // LOGIC (checked in this order on every back press):
+    //   1. Sub-view open → restore sentinel, navigate back in JS
+    //   2. Top-level + grace active → DO NOT restore sentinel → HA exits
+    //   3. Top-level + no grace → restore sentinel, show toast, arm grace
+
     history.pushState({ seerr: "s" }, "");
 
-    this._exiting = false;
-
     window.addEventListener("popstate", () => {
-      // Ignore the popstate caused by our own history.go(-1) exit call.
-      if (this._exiting) { this._exiting = false; return; }
 
-      // Always push sentinel back first — we decide below whether to exit.
-      // This runs on EVERY popstate including HA's internal ones.
-      // That is fine: HA events just get absorbed by the re-push.
-      history.pushState({ seerr: "s" }, "");
-
-      // Sub-view: navigate back one level, grace is reset.
+      // ── 1. Sub-view: always restore sentinel, go back one level ───────
       if (this._browseDetail || this._detail || this._browseMode) {
+        history.pushState({ seerr: "s" }, ""); // restore — sub-views NEVER exit
         this._cancelGrace();
         this._saveScroll();
-        if (this._browseDetail) {
-          this._browseDetail = null; this._browseDetailFull = null;
-        } else if (this._detail) {
-          this._detail = null; this._detailFull = null;
-        } else {
-          this._browseMode = null;
-        }
+        if (this._browseDetail)      { this._browseDetail = null; this._browseDetailFull = null; }
+        else if (this._detail)       { this._detail = null; this._detailFull = null; }
+        else                         { this._browseMode = null; }
         this._paint();
         return;
       }
 
-      // Top-level — first press: show toast, arm grace.
-      if (!this._warnActive) {
-        this._warnActive = true;
-        this._toast("Press back again to exit", "error");
+      // ── 2. Top-level + grace active: EXIT ─────────────────────────────
+      if (this._warnActive) {
+        this._warnActive = false;
         clearTimeout(this._backGraceTimer);
-        this._backGraceTimer = setTimeout(() => {
-          this._warnActive = false;
-        }, 3000);
+        // Sentinel NOT restored → HA navigates back → app exits
         return;
       }
 
-      // Top-level — second press within grace: exit.
-      // Set _exiting flag so the next popstate (from history.go(-1)) is ignored,
-      // then undo the sentinel push so HA can navigate back naturally.
-      this._warnActive = false;
-      this._exiting    = true;
+      // ── 3. Top-level + no grace: show toast, restore sentinel ─────────
+      history.pushState({ seerr: "s" }, ""); // restore — not exiting yet
+      this._warnActive = true;
+      this._toast("Press back again to exit", "error");
       clearTimeout(this._backGraceTimer);
-      history.go(-1);
+      this._backGraceTimer = setTimeout(() => { this._warnActive = false; }, 3000);
     });
   }
 
-
   _cancelGrace() {
-    // Reset grace whenever user does anything inside the card.
     this._warnActive = false;
     clearTimeout(this._backGraceTimer);
     this._backGraceTimer = null;
   }
-
 
   _pushHistoryState() {
     // No-op: we maintain the guard stack in _setupHistory instead
