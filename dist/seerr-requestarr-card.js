@@ -182,23 +182,30 @@ const CSS = `
   }
 
   /* ── Poster cards ── */
-  .media-card, .trend-card {
+  /* All card types share the same flex-column layout so the rating bar
+     always pins to the bottom regardless of title length */
+  .media-card, .trend-card, .rating-card {
     background: var(--surf2); border: 1px solid var(--border);
     border-radius: 9px; overflow: hidden; cursor: pointer; transition: all .18s; position: relative;
+    display: flex; flex-direction: column;
   }
-  .media-card:hover, .trend-card:hover {
+  .media-card:hover, .trend-card:hover, .rating-card:hover {
     border-color: rgba(232,136,0,.5); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.45);
   }
-  .media-card img, .trend-card img { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; background: var(--surf); }
+  .media-card img, .trend-card img, .rating-card img {
+    width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; background: var(--surf); flex-shrink: 0;
+  }
   .trend-card img { width: 90px; height: 135px; }
   .no-poster {
-    aspect-ratio: 2/3; background: var(--surf);
+    aspect-ratio: 2/3; background: var(--surf); flex-shrink: 0;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     font-size: 22px; gap: 4px; width: 100%;
   }
   .trend-card .no-poster { width: 90px; height: 135px; }
   .no-poster span { font-size: 9px; color: var(--muted); text-align: center; padding: 0 6px; }
-  .card-info  { padding: 6px 7px; }
+  /* card-body grows to fill remaining space, pushing rating-bar to bottom */
+  .card-body { display: flex; flex-direction: column; flex: 1; }
+  .card-info  { padding: 6px 7px 4px; flex: 1; }
   .card-title {
     font-size: 10px; font-weight: 500; line-height: 1.3;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 3px;
@@ -213,8 +220,9 @@ const CSS = `
     position: absolute; top: 5px; right: 5px; border-radius: 5px; padding: 2px 5px;
     font-size: 8px; font-weight: 700; backdrop-filter: blur(6px); line-height: 1;
   }
+  /* Trend card: narrow horizontal scroll version */
   .trend-card { width: 90px; flex-shrink: 0; }
-  .trend-info { padding: 5px 6px; }
+  .trend-info { padding: 5px 6px 3px; flex: 1; }
   .trend-title {
     font-size: 9px; font-weight: 500; line-height: 1.3;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
@@ -359,8 +367,11 @@ const CSS = `
   /* ── Rating bar on cards ── */
   .rating-bar {
     display: flex; flex-wrap: wrap; gap: 3px; padding: 4px 6px 5px;
-    border-top: 1px solid var(--border); min-height: 22px; background: rgba(0,0,0,.25);
+    border-top: 1px solid var(--border); min-height: 24px; background: rgba(0,0,0,.25);
+    /* margin-top: auto ensures it's always at the bottom of the flex column */
+    margin-top: auto; flex-shrink: 0;
   }
+  .rating-bar:empty { display: none; }
   .rb-item {
     font-size: 8px; font-weight: 600; white-space: nowrap;
     background: rgba(255,255,255,.06); border-radius: 3px; padding: 1px 4px;
@@ -405,15 +416,7 @@ const CSS = `
   }
   .disc-grid::-webkit-scrollbar { width: 3px; }
   .disc-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-  /* Rating card — slightly wider to fit rating bar */
-  .rating-card {
-    background: var(--surf2); border: 1px solid var(--border);
-    border-radius: 9px; overflow: hidden; cursor: pointer; transition: all .18s; position: relative;
-  }
-  .rating-card:hover { border-color: rgba(232,136,0,.5); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.45); }
-  .rating-card img { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; background: var(--surf); }
-  .rating-card .no-poster { width: 100%; aspect-ratio: 2/3; }
-  .rating-card .card-info { padding: 5px 6px 0; }
+  /* .rating-card styles merged into unified card CSS above */
   .disc-footer { display: flex; justify-content: center; padding: 10px 0 4px; }
 
   /* Ratings in detail view */
@@ -683,6 +686,10 @@ class SeerrRequestarrCard extends HTMLElement {
         })
       );
       this._requests = enriched;
+      // Prefetch ratings for any movie requests
+      this._fetchRatingsForItems(
+        enriched.map(r => ({ ...r._d, mediaType: r.type || r.media?.mediaType })).filter(Boolean)
+      );
     } catch (e) {
       this._reqError = e.message;
     } finally {
@@ -886,6 +893,8 @@ class SeerrRequestarrCard extends HTMLElement {
       if (this._searchFilter === "movie") res = res.filter(r => r.mediaType === "movie");
       if (this._searchFilter === "tv")    res = res.filter(r => r.mediaType === "tv");
       this._searchResults = res;
+      // Prefetch ratings for movie results so they appear on tiles
+      this._fetchRatingsForItems(res);
     } catch (e) {
       this._toast("Search failed: " + e.message, "error"); this._searchResults = [];
     } finally {
@@ -970,56 +979,65 @@ class SeerrRequestarrCard extends HTMLElement {
   // ── HTML builders ─────────────────────────────────────────────────────────
 
   _trendCardHtml(item) {
-    const p    = this._img(item.posterPath, "w185");
-    const year = this._year(item);
-    const ico  = item.mediaType === "movie" ? "🎬" : "📺";
+    const p      = this._img(item.posterPath, "w185");
+    const year   = this._year(item);
+    const ico    = item.mediaType === "movie" ? "🎬" : "📺";
+    const cached = this._ratingsCache[item.id];
+    const rbar   = `<div class="rating-bar">${this._ratingBarInner(item.voteAverage, cached)}</div>`;
     return `
       <div class="trend-card" data-id="${item.id}" data-type="${item.mediaType}">
         ${this._availBadge(item.mediaInfo)}
         ${p ? `<img src="${p}" alt="" loading="lazy">` : `<div class="no-poster">${ico}<span>${(item.title||item.name||"").slice(0,18)}</span></div>`}
-        <div class="trend-info">
-          <div class="trend-title">${item.title || item.name || "Unknown"}</div>
-          <div class="trend-year">${year}</div>
+        <div class="card-body">
+          <div class="trend-info">
+            <div class="trend-title">${item.title || item.name || "Unknown"}</div>
+            <div class="trend-year">${year}</div>
+          </div>
+          ${rbar}
         </div>
       </div>`;
   }
 
   _mediaCardHtml(item) {
-    const p    = this._img(item.posterPath, "w185");
-    const year = this._year(item);
-    const type = item.mediaType === "movie" ? "Film" : "TV";
-    const ico  = item.mediaType === "movie" ? "🎬" : "📺";
+    const p      = this._img(item.posterPath, "w185");
+    const year   = this._year(item);
+    const type   = item.mediaType === "movie" ? "Film" : "TV";
+    const ico    = item.mediaType === "movie" ? "🎬" : "📺";
+    const cached = this._ratingsCache[item.id];
+    const rbar   = `<div class="rating-bar">${this._ratingBarInner(item.voteAverage, cached)}</div>`;
     return `
       <div class="media-card" data-id="${item.id}" data-type="${item.mediaType}">
         ${this._availBadge(item.mediaInfo)}
         ${p ? `<img src="${p}" alt="" loading="lazy">` : `<div class="no-poster">${ico}<span>${(item.title||item.name||"").slice(0,18)}</span></div>`}
-        <div class="card-info">
-          <div class="card-title">${item.title || item.name || "Unknown"}</div>
-          <div class="card-meta"><span>${year}</span><span class="type-badge">${type}</span></div>
+        <div class="card-body">
+          <div class="card-info">
+            <div class="card-title">${item.title || item.name || "Unknown"}</div>
+            <div class="card-meta"><span>${year}</span><span class="type-badge">${type}</span></div>
+          </div>
+          ${rbar}
         </div>
       </div>`;
   }
 
-  // Rating card — used in Discover tab, shows rating bar under poster
+  // Rating card — unified with media-card, uses card-body flex layout
   _ratingCardHtml(item) {
-    const p     = this._img(item.posterPath, "w185");
-    const year  = this._year(item);
-    const ico   = item.mediaType === "tv" ? "📺" : "🎬";
-    const type  = item.mediaType === "tv" ? "TV" : "Film";
+    const p      = this._img(item.posterPath, "w185");
+    const year   = this._year(item);
+    const ico    = item.mediaType === "tv" ? "📺" : "🎬";
+    const type   = item.mediaType === "tv" ? "TV" : "Film";
     const cached = this._ratingsCache[item.id];
-    // Show TMDB score immediately from list data; RT/IMDb fill in when fetched
-    const tmdbScore = item.voteAverage ? Number(item.voteAverage).toFixed(1) : null;
-    // Build rating bar: show TMDB score immediately, RT/IMDb once cached
-    const ratingBar = `<div class="rating-bar">${this._ratingBarInner(item.voteAverage, cached)}</div>`;
+    const rbar   = `<div class="rating-bar">${this._ratingBarInner(item.voteAverage, cached)}</div>`;
     return `
       <div class="rating-card" data-id="${item.id}" data-type="${item.mediaType || 'movie'}">
         ${this._availBadge(item.mediaInfo)}
         ${p ? `<img src="${p}" alt="" loading="lazy">` : `<div class="no-poster">${ico}<span>${(item.title||item.name||"").slice(0,18)}</span></div>`}
-        <div class="card-info">
-          <div class="card-title">${item.title || item.name || "Unknown"}</div>
-          <div class="card-meta"><span>${year}</span><span class="type-badge">${type}</span></div>
+        <div class="card-body">
+          <div class="card-info">
+            <div class="card-title">${item.title || item.name || "Unknown"}</div>
+            <div class="card-meta"><span>${year}</span><span class="type-badge">${type}</span></div>
+          </div>
+          ${rbar}
         </div>
-        ${ratingBar}
       </div>`;
   }
 
