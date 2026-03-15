@@ -526,6 +526,7 @@ class SeerrRequestarrCard extends HTMLElement {
     this._discPage      = 1;
     this._discDone      = false;
     this._ratingsCache  = {};         // tmdbId -> ratings object
+    this._historyBound  = false;       // whether popstate listener is set up
   }
 
   static getStubConfig() {
@@ -552,6 +553,7 @@ class SeerrRequestarrCard extends HTMLElement {
       this._loadTrending();
       this._loadRequests();
       this._loadDiscover(1);
+      this._setupHistory();
     }
     this._syncStats();
   }
@@ -737,6 +739,7 @@ class SeerrRequestarrCard extends HTMLElement {
     this._detailFull    = null;
     this._detailLoading = true;
     this._browseDetail  = null;
+    this._pushHistoryState();
     this._paint();
     try {
       const path = media.mediaType === "movie" ? `/movie/${media.id}` : `/tv/${media.id}`;
@@ -772,6 +775,76 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   // ── Discover loaders ──────────────────────────────────────────────────────
+
+  // Surgically update only .disc-grid, leaving .disc-controls (and its
+  // scroll position) completely untouched. Used for section/genre switches.
+  async _loadDiscoverGrid(page = 1) {
+    this._discLoading = true;
+    const grid = this.shadowRoot.querySelector(".disc-grid");
+    if (grid && page === 1) {
+      grid.innerHTML = `<div class="state-box"><div class="spinner"></div><span>Loading…</span></div>`;
+    } else if (page > 1) {
+      const footer = this.shadowRoot.querySelector(".disc-footer");
+      if (footer) footer.innerHTML = `<div class="spinner" style="width:22px;height:22px;margin:0 auto"></div>`;
+    }
+    try {
+      const sections = DISCOVER_SECTIONS[this._discType];
+      const sec      = sections.find(s => s.id === this._discSection) || sections[0];
+      const params   = { ...sec.params, page };
+      const data     = await this._get(sec.path, params);
+      const results  = data.results || [];
+      if (page === 1) {
+        this._discData = results;
+        this._discDone = results.length < 20;
+        this._discPage = 1;
+      } else {
+        this._discData.push(...results);
+        this._discDone = results.length < 20;
+        this._discPage = page;
+      }
+      this._discLoading = false;
+      this._fetchRatingsForItems(results);
+      // Rebuild grid content in place
+      if (grid) {
+        if (page === 1) {
+          const footer = !this._discDone
+            ? `<div class="disc-footer"><button class="retry-btn" data-action="disc-more">Load more</button></div>`
+            : `<div class="disc-footer"></div>`;
+          grid.innerHTML = `<div class="poster-grid">${this._discData.map(i => this._ratingCardHtml(i)).join("")}</div>${footer}`;
+          // Re-bind cards and load-more in the new grid
+          grid.querySelectorAll(".rating-card").forEach(c =>
+            c.addEventListener("click", () => this._openDiscoverDetail(c)));
+          grid.querySelector("[data-action='disc-more']")?.addEventListener("click", () =>
+            this._loadDiscoverGrid(this._discPage + 1));
+        } else {
+          // Append new cards
+          const posterGrid = grid.querySelector(".poster-grid");
+          if (posterGrid) {
+            const frag = document.createDocumentFragment();
+            results.forEach(item => {
+              const tmp = document.createElement("div");
+              tmp.innerHTML = this._ratingCardHtml(item);
+              const card = tmp.firstElementChild;
+              card.addEventListener("click", () => this._openDiscoverDetail(card));
+              frag.appendChild(card);
+            });
+            posterGrid.appendChild(frag);
+          }
+          const footer2 = grid.querySelector(".disc-footer");
+          if (footer2) {
+            footer2.innerHTML = this._discDone ? "" : `<button class="retry-btn" data-action="disc-more">Load more</button>`;
+            footer2.querySelector("[data-action='disc-more']")?.addEventListener("click", () =>
+              this._loadDiscoverGrid(this._discPage + 1));
+          }
+        }
+      }
+    } catch (e) {
+      this._discLoading = false;
+      this._discError   = e.message;
+      const grid2 = this.shadowRoot.querySelector(".disc-grid");
+      if (grid2) grid2.innerHTML = this._stateHtml("⚠️", "Could not load", e.message, "discover");
+    }
+  }
 
   async _loadDiscover(page = 1) {
     this._discLoading = true;
@@ -911,6 +984,7 @@ class SeerrRequestarrCard extends HTMLElement {
     this._browseDetail        = { ...m, mediaType: type || m.mediaType };
     this._browseDetailFull    = null;
     this._browseDetailLoading = true;
+    this._pushHistoryState();
     this._paint();
     const path = (type === "tv" || m.mediaType === "tv") ? `/tv/${m.id}` : `/movie/${m.id}`;
     // Only movies have a ratings endpoint
@@ -1410,6 +1484,7 @@ class SeerrRequestarrCard extends HTMLElement {
     this._browseDetail        = m;
     this._browseDetailFull    = null;
     this._browseDetailLoading = true;
+    this._pushHistoryState();
     this._paint();
     // Fetch full details
     const path = m.mediaType === "movie" ? `/movie/${m.id}` : `/tv/${m.id}`;
@@ -1438,6 +1513,7 @@ class SeerrRequestarrCard extends HTMLElement {
         this._browseData = [];
         this._browsePage = 1;
         this._browseDone = false;
+        this._pushHistoryState();
         this._loadBrowse(this._browseMode, 1);
       })
     );
@@ -1455,29 +1531,26 @@ class SeerrRequestarrCard extends HTMLElement {
         this._loadDiscover(1);
       })
     );
-    // Section switcher — save pill row scroll before re-render, restore after
+    // Section switcher — update active pill in-place (no full re-render)
+    // so the pill row scroll position is NEVER disturbed.
     tc.querySelectorAll("[data-dsec]").forEach(btn =>
       btn.addEventListener("click", () => {
         if (this._discSection === btn.dataset.dsec) return;
-        // Save horizontal scroll position of the pill row
-        const pillRow = this.shadowRoot.querySelector(".disc-section-row");
-        const savedScroll = pillRow ? pillRow.scrollLeft : 0;
+        // Toggle active class on pills without touching scroll
+        this.shadowRoot.querySelectorAll("[data-dsec]").forEach(b =>
+          b.classList.toggle("active", b.dataset.dsec === btn.dataset.dsec));
         this._discSection = btn.dataset.dsec;
         this._discData    = []; this._discPage = 1; this._discDone = false;
-        this._loadDiscover(1);
-        // Restore scroll position after the DOM updates (next microtask)
-        requestAnimationFrame(() => {
-          const newPillRow = this.shadowRoot.querySelector(".disc-section-row");
-          if (newPillRow) newPillRow.scrollLeft = savedScroll;
-        });
+        // Load with surgical grid-only updates (preserves controls + scroll)
+        this._loadDiscoverGrid(1);
       })
     );
     // Rating cards
     tc.querySelectorAll(".rating-card").forEach(c =>
       c.addEventListener("click", () => this._openDiscoverDetail(c)));
-    // Load more
+    // Load more — use grid-only update to preserve pill row scroll
     tc.querySelector("[data-action='disc-more']")?.addEventListener("click", () =>
-      this._loadDiscover(this._discPage + 1));
+      this._loadDiscoverGrid(this._discPage + 1));
     // Retry
     tc.querySelectorAll(".retry-btn[data-retry='discover']").forEach(btn =>
       btn.addEventListener("click", () => {
@@ -1556,6 +1629,37 @@ class SeerrRequestarrCard extends HTMLElement {
   _updateTabs() {
     this.shadowRoot.querySelectorAll(".tab").forEach(t =>
       t.classList.toggle("active", t.dataset.tab === this._tab));
+  }
+
+  // ── Browser back button support ──────────────────────────────────────────
+
+  _setupHistory() {
+    if (this._historyBound) return;
+    this._historyBound = true;
+    // Replace the current history entry with a base state so we can
+    // intercept the back button while inside the card.
+    history.replaceState({ seerrBase: true }, "");
+    window.addEventListener("popstate", (e) => {
+      // Only handle if we are showing a sub-view inside the card
+      const inSubView = this._detail || this._browseDetail || this._browseMode ||
+                        (this._discData.length && this._tab === "discover" && this._discSection !== DISCOVER_SECTIONS[this._discType][0].id);
+      if (!inSubView) return;
+      // Re-push base state so back button works again next time
+      history.pushState({ seerrBase: true }, "");
+      // Navigate back one level
+      if (this._browseDetail) {
+        this._browseDetail = null; this._browseDetailFull = null; this._paint();
+      } else if (this._detail) {
+        this._detail = null; this._detailFull = null; this._paint();
+      } else if (this._browseMode) {
+        this._browseMode = null; this._paint();
+      }
+    });
+  }
+
+  _pushHistoryState() {
+    // Push a state so the back button has something to pop
+    history.pushState({ seerrNav: true }, "");
   }
 
   // ── Root render ───────────────────────────────────────────────────────────
