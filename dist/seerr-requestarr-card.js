@@ -756,6 +756,7 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   async _loadDetail(media) {
+    this._cancelGrace(); // entering detail resets back-grace
     this._detail        = media;
     this._detailFull    = null;
     this._detailLoading = true;
@@ -1001,6 +1002,7 @@ class SeerrRequestarrCard extends HTMLElement {
     const m    = this._discData.find(x => x.id === id);
     if (!m) return;
     // Use browse detail state so back returns to discover
+    this._cancelGrace(); // entering detail resets back-grace
     this._browseDetail        = { ...m, mediaType: type || m.mediaType };
     this._browseDetailFull    = null;
     this._browseDetailLoading = true;
@@ -1522,6 +1524,7 @@ class SeerrRequestarrCard extends HTMLElement {
     const m    = this._browseData.find(x => x.id === id && x.mediaType === type);
     if (!m) return;
     // Open detail layered on top of browse — preserves browse scroll on back
+    this._cancelGrace(); // entering detail resets back-grace
     this._browseDetail        = m;
     this._browseDetailFull    = null;
     this._browseDetailLoading = true;
@@ -1549,6 +1552,7 @@ class SeerrRequestarrCard extends HTMLElement {
       c.addEventListener("click", () => this._openDetail(c)));
     tc.querySelectorAll("[data-browse]").forEach(btn =>
       btn.addEventListener("click", () => {
+        this._cancelGrace(); // entering browse resets back-grace
         this._browseMode = btn.dataset.browse;
         this._browseData = [];
         this._browsePage = 1;
@@ -1564,6 +1568,7 @@ class SeerrRequestarrCard extends HTMLElement {
     tc.querySelectorAll("[data-dtype]").forEach(btn =>
       btn.addEventListener("click", () => {
         if (this._discType === btn.dataset.dtype) return;
+        this._cancelGrace(); // type switch resets grace
         this._saveScroll(); // save disc-grid scroll before switching type
         this._discType    = btn.dataset.dtype;
         this._discSection = DISCOVER_SECTIONS[this._discType][0].id;
@@ -1576,6 +1581,7 @@ class SeerrRequestarrCard extends HTMLElement {
     tc.querySelectorAll("[data-dsec]").forEach(btn =>
       btn.addEventListener("click", () => {
         if (this._discSection === btn.dataset.dsec) return;
+        this._cancelGrace(); // section switch resets grace
         this._saveScroll(); // save disc-grid scroll before switching section
         // Toggle active class on pills without touching scroll
         this.shadowRoot.querySelectorAll("[data-dsec]").forEach(b =>
@@ -1602,6 +1608,7 @@ class SeerrRequestarrCard extends HTMLElement {
 
   _bindBrowse(tc) {
     tc.querySelector(".browse-back")?.addEventListener("click", () => {
+      this._cancelGrace();
       this._saveScroll(); // save browse scroll before leaving
       this._browseMode = null; this._paint();
     });
@@ -1613,6 +1620,7 @@ class SeerrRequestarrCard extends HTMLElement {
 
   _bindBrowseDetail(tc) {
     tc.querySelector(".back-btn")?.addEventListener("click", () => {
+      this._cancelGrace();
       this._saveScroll(); // save detail scroll before leaving
       this._browseDetail = null; this._browseDetailFull = null;
       this._paint();
@@ -1623,6 +1631,7 @@ class SeerrRequestarrCard extends HTMLElement {
 
   _bindDetail(tc) {
     tc.querySelector(".back-btn")?.addEventListener("click", () => {
+      this._cancelGrace();
       this._saveScroll(); // save detail scroll before leaving
       this._detail = null; this._detailFull = null; this._paint();
     });
@@ -1740,39 +1749,31 @@ class SeerrRequestarrCard extends HTMLElement {
   _setupHistory() {
     if (this._historyBound) return;
     this._historyBound = true;
-    this._backGraceTimer = null;
-    this._warnActive     = false;
 
-    // We maintain EXACTLY 2 sentinels above HA's history at all times.
-    // This guarantees that:
-    //   - Any back press from a sub-view is always intercepted (sentinel exists)
-    //   - After handling a back press we immediately restore 2 sentinels
-    //   - At top-level: first back shows grace toast (2 sentinels restored)
-    //     Second back within 3s exits; otherwise sentinel restored + grace resets
+    // ── Approach ──────────────────────────────────────────────────────────
+    // We own one sentinel entry at the top of the history stack.
+    // On every handled popstate we immediately push it back.
+    // Grace state (_warnActive) is a simple JS flag that resets whenever
+    // the user does ANYTHING inside the card (tap, navigate, etc.).
+    // Only if we are BOTH at top-level AND _warnActive do we exit.
     //
-    // The key insight: ALWAYS push 2 sentinels back after every handled event.
-    // This makes the behaviour consistent regardless of how many times the
-    // user navigates in/out of detail views.
+    // _warnActive is reset by _cancelGrace() which is called from every
+    // user interaction point in the card.
 
-    const pushSentinels = () => {
-      history.pushState({ seerr: "s" }, "");
-      history.pushState({ seerr: "s" }, "");
-    };
+    this._warnActive     = false;
+    this._backGraceTimer = null;
 
-    const resetGrace = () => {
-      this._warnActive = false;
-      clearTimeout(this._backGraceTimer);
-      this._backGraceTimer = null;
-    };
-
-    // Seed initial sentinels
-    pushSentinels();
+    // Push our sentinel
+    history.pushState({ seerr: "s" }, "");
 
     window.addEventListener("popstate", () => {
-      // ── In a sub-view: go back one level, restore 2 sentinels ─────────
+
+      // Always push sentinel back first — we decide below whether to navigate
+      history.pushState({ seerr: "s" }, "");
+
+      // ── In a sub-view: go back one level ─────────────────────────────
       if (this._browseDetail || this._detail || this._browseMode) {
-        pushSentinels(); // always restore 2 after handling
-        resetGrace();    // reset any pending grace when entering sub-view
+        this._cancelGrace(); // entering sub-view always cancels grace
         this._saveScroll();
         if (this._browseDetail) {
           this._browseDetail = null; this._browseDetailFull = null;
@@ -1787,23 +1788,30 @@ class SeerrRequestarrCard extends HTMLElement {
 
       // ── At top-level ──────────────────────────────────────────────────
       if (!this._warnActive) {
-        // First press at top-level: show grace toast, restore 2 sentinels
-        pushSentinels();
+        // First back at top-level: show toast, arm grace
         this._warnActive = true;
         this._toast("Press back again to exit", "error");
         clearTimeout(this._backGraceTimer);
-        this._backGraceTimer = setTimeout(() => {
-          // Grace window expired — reset so next back starts fresh
-          resetGrace();
-          // Ensure sentinels are in place (they should be, but be safe)
-        }, 3000);
+        this._backGraceTimer = setTimeout(() => this._cancelGrace(), 3000);
       } else {
-        // Second press within grace window — exit HA (don't restore sentinels)
-        resetGrace();
-        // No pushSentinels() here — let HA handle backward navigation
+        // Second back within 3s while still at top-level: exit HA
+        // Remove our sentinel so the next popstate goes to HA's history
+        this._cancelGrace();
+        history.go(-1); // go back past our just-pushed sentinel + one more
       }
     });
   }
+
+  _cancelGrace() {
+    // Call this whenever the user does anything inside the card.
+    // This resets the back-grace so the next top-level back shows the toast.
+    if (this._warnActive) {
+      this._warnActive = false;
+      clearTimeout(this._backGraceTimer);
+      this._backGraceTimer = null;
+    }
+  }
+
 
   _pushHistoryState() {
     // No-op: we maintain the guard stack in _setupHistory instead
@@ -1848,6 +1856,7 @@ class SeerrRequestarrCard extends HTMLElement {
       const tab = btn.dataset.tab;
       if (!tab || tab === this._tab && !this._detail && !this._browseDetail && !this._browseMode) return;
       this._saveScroll(); // save current view scroll before switching tab
+      this._cancelGrace();   // any navigation resets back-grace
       this._tab              = tab;
       this._detail           = null;
       this._detailFull       = null;
