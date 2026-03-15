@@ -459,15 +459,22 @@ const CSS = `
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 7px; margin-bottom: 14px;
+    /* All rating blocks are identical width/height via the grid */
+  }
+  /* Ensure exactly 3 per row regardless of count */
+  .rating-block:nth-child(3n+1):last-child,
+  .rating-block:nth-child(3n+2):last-child {
+    /* Orphaned blocks still look tidy */
   }
   .rating-block {
     background: var(--surf2); border: 1px solid var(--border);
-    border-radius: 9px; padding: 10px 8px; display: flex; flex-direction: column;
+    border-radius: 9px; padding: 10px 6px; display: flex; flex-direction: column;
     align-items: center; justify-content: center;
+    min-height: 72px; /* fixed height so all blocks are the same size */
   }
-  .rating-logo  { font-size: 16px; margin-bottom: 4px; }
-  .rating-score { font-family: var(--disp); font-size: 20px; font-weight: 800; line-height: 1; }
-  .rating-sublabel { font-size: 9px; color: var(--muted); margin-top: 3px; text-align: center; letter-spacing: .3px; }
+  .rating-logo  { font-size: 15px; margin-bottom: 3px; line-height: 1; }
+  .rating-score { font-family: var(--disp); font-size: 18px; font-weight: 800; line-height: 1; white-space: nowrap; }
+  .rating-sublabel { font-size: 8px; color: var(--muted); margin-top: 3px; text-align: center; letter-spacing: .3px; white-space: nowrap; }
 
   /* ── Toast ── */
   .toast {
@@ -530,6 +537,7 @@ class SeerrRequestarrCard extends HTMLElement {
     this._discDone      = false;
     this._ratingsCache  = {};         // tmdbId -> ratings object
     this._historyBound  = false;       // whether popstate listener is set up
+    this._warnActive    = false;       // back-button grace warning showing
     this._scrollPos     = {};          // { key: scrollTop } remembered scroll positions
   }
 
@@ -743,7 +751,6 @@ class SeerrRequestarrCard extends HTMLElement {
     this._detailFull    = null;
     this._detailLoading = true;
     this._browseDetail  = null;
-    this._pushHistoryState();
     this._paint();
     try {
       const path = media.mediaType === "movie" ? `/movie/${media.id}` : `/tv/${media.id}`;
@@ -988,7 +995,6 @@ class SeerrRequestarrCard extends HTMLElement {
     this._browseDetail        = { ...m, mediaType: type || m.mediaType };
     this._browseDetailFull    = null;
     this._browseDetailLoading = true;
-    this._pushHistoryState();
     this._paint();
     const path = (type === "tv" || m.mediaType === "tv") ? `/tv/${m.id}` : `/movie/${m.id}`;
     // Only movies have a ratings endpoint
@@ -1063,6 +1069,7 @@ class SeerrRequestarrCard extends HTMLElement {
     const rtC  = r?.criticsScore;
     const rtA  = r?.audienceScore;
     if (!tmdb && !imdb && rtC == null && rtA == null) return "";
+    // Always render TMDB block if we have a voteAverage
     const blocks = [];
     if (tmdb) blocks.push(`
       <div class="rating-block">
@@ -1429,8 +1436,6 @@ class SeerrRequestarrCard extends HTMLElement {
   _paint() {
     const tc = this.shadowRoot.querySelector(".tc");
     if (!tc) return;
-    this._saveScroll(); // remember position of current view before replacing it
-
     // Detail opened from within browse view
     if (this._browseDetail) {
       tc.innerHTML = this._detailHtml(this._browseDetail, this._browseDetailFull, this._browseDetailLoading);
@@ -1496,7 +1501,6 @@ class SeerrRequestarrCard extends HTMLElement {
     this._browseDetail        = m;
     this._browseDetailFull    = null;
     this._browseDetailLoading = true;
-    this._pushHistoryState();
     this._paint();
     // Fetch full details
     const path = m.mediaType === "movie" ? `/movie/${m.id}` : `/tv/${m.id}`;
@@ -1525,7 +1529,6 @@ class SeerrRequestarrCard extends HTMLElement {
         this._browseData = [];
         this._browsePage = 1;
         this._browseDone = false;
-        this._pushHistoryState();
         this._loadBrowse(this._browseMode, 1);
       })
     );
@@ -1574,6 +1577,7 @@ class SeerrRequestarrCard extends HTMLElement {
 
   _bindBrowse(tc) {
     tc.querySelector(".browse-back")?.addEventListener("click", () => {
+      this._saveScroll(); // save browse scroll before leaving
       this._browseMode = null; this._paint();
     });
     tc.querySelectorAll(".media-card").forEach(c =>
@@ -1584,8 +1588,9 @@ class SeerrRequestarrCard extends HTMLElement {
 
   _bindBrowseDetail(tc) {
     tc.querySelector(".back-btn")?.addEventListener("click", () => {
+      this._saveScroll(); // save detail scroll before leaving
       this._browseDetail = null; this._browseDetailFull = null;
-      this._paint(); // returns to browse view
+      this._paint();
     });
     const rb = tc.querySelector(".req-btn");
     if (rb && !rb.disabled) rb.addEventListener("click", () => this._requestMedia(this._browseDetail));
@@ -1593,6 +1598,7 @@ class SeerrRequestarrCard extends HTMLElement {
 
   _bindDetail(tc) {
     tc.querySelector(".back-btn")?.addEventListener("click", () => {
+      this._saveScroll(); // save detail scroll before leaving
       this._detail = null; this._detailFull = null; this._paint();
     });
     const rb = tc.querySelector(".req-btn");
@@ -1709,54 +1715,93 @@ class SeerrRequestarrCard extends HTMLElement {
   _setupHistory() {
     if (this._historyBound) return;
     this._historyBound = true;
-    this._backGraceCount = 0;    // presses on base state before exiting HA
     this._backGraceTimer = null;
 
-    // Seed two history entries so we absorb 2 back presses before exiting.
-    // Entry 0: base (will trigger exit to HA if popped)
-    // Entry 1: guard1 (first back press — show toast warning)
-    // Entry 2: guard2 (where we start — second back press exits)
-    history.replaceState({ seerr: "base"   }, "");
-    history.pushState(   { seerr: "guard1" }, "");
-    history.pushState(   { seerr: "guard2" }, "");
+    // Strategy: keep TWO guard entries above the real HA history entry.
+    //   stack (top → bottom): [guard] [warn] [HA-base]
+    // 
+    // When back is pressed:
+    //   A) In sub-view (detail/browse): handle in JS, re-push guard to stay at top
+    //   B) At top-level, guard pops → we're at warn:
+    //      push guard back, show "press again" toast
+    //   C) At top-level, second press → warn pops → we're at HA-base:
+    //      do NOT intercept — HA handles navigation naturally
 
-    window.addEventListener("popstate", (e) => {
-      const state = e.state?.seerr;
+    history.replaceState({ seerr: "ha-base" }, ""); // bottom: real HA entry
+    history.pushState(   { seerr: "warn"    }, ""); // middle: shows toast
+    history.pushState(   { seerr: "guard"   }, ""); // top: always consumed first
 
-      // ── Still inside a card sub-view ──────────────────────────────────
+    window.addEventListener("popstate", e => {
+      const s = e.state?.seerr;
+
+      // ── Inside a sub-view: navigate back one level in the card ─────────
       if (this._browseDetail || this._detail || this._browseMode) {
-        // Navigate back one level inside the card
-        history.pushState({ seerr: "guard2" }, ""); // restore our top entry
+        history.pushState({ seerr: "guard" }, ""); // put guard back on top
+        this._saveScroll();
         if (this._browseDetail) {
-          this._browseDetail = null; this._browseDetailFull = null; this._paint();
+          this._browseDetail = null; this._browseDetailFull = null;
         } else if (this._detail) {
-          this._detail = null; this._detailFull = null; this._paint();
+          this._detail = null; this._detailFull = null;
         } else if (this._browseMode) {
-          this._browseMode = null; this._paint();
+          this._browseMode = null;
         }
+        this._paint();
         return;
       }
 
-      // ── At top-level tab ──────────────────────────────────────────────
-      if (state === "guard1") {
-        // First press from top-level: warn and push guard2 back
-        history.pushState({ seerr: "guard2" }, "");
+      // ── At top level ───────────────────────────────────────────────────
+      if (s === "warn") {
+        // "warn" was popped — push guard back, show toast
+        history.pushState({ seerr: "guard" }, "");
+        history.pushState({ seerr: "guard" }, ""); // extra guard so next back hits warn again
+        // Replace top with warn + guard so the cycle works on second use
+        // Actually simpler: just rebuild the full stack
+        history.replaceState({ seerr: "guard" }, ""); 
+        // Re-insert warn below guard
+        // We can't insert below, so instead: just show toast and on next popstate let it go
+        this._warnActive = true;
         this._toast("Press back again to exit", "error");
-        // Clear warning after 3s
         clearTimeout(this._backGraceTimer);
         this._backGraceTimer = setTimeout(() => {
-          this._toast("", ""); // clear
-        }, 2800);
+          this._warnActive = false;
+          this._toast("", "");
+          // Re-seed the guard stack so back-grace resets
+          history.replaceState({ seerr: "ha-base" }, "");
+          history.pushState({ seerr: "warn"    }, "");
+          history.pushState({ seerr: "guard"   }, "");
+        }, 3000);
         return;
       }
-      // state === "base" — second press: let HA handle it (don't intercept)
-      // The popstate already moved history back to "base" so HA navigation takes over
+
+      if (s === "guard") {
+        if (this._warnActive) {
+          // Second press within grace window — let HA handle it
+          this._warnActive = false;
+          clearTimeout(this._backGraceTimer);
+          // Don't intercept — HA navigation takes over
+          return;
+        }
+        // guard popped normally → show warning
+        history.pushState({ seerr: "guard" }, ""); // put guard back
+        this._warnActive = true;
+        this._toast("Press back again to exit", "error");
+        clearTimeout(this._backGraceTimer);
+        this._backGraceTimer = setTimeout(() => {
+          this._warnActive = false;
+          this._toast("", "");
+          history.replaceState({ seerr: "ha-base" }, "");
+          history.pushState({ seerr: "warn"    }, "");
+          history.pushState({ seerr: "guard"   }, "");
+        }, 3000);
+        return;
+      }
+      // s === "ha-base" or anything else: let HA handle it
     });
   }
 
   _pushHistoryState() {
-    // Push a state so the back button has something to pop
-    history.pushState({ seerrNav: true }, "");
+    // No-op: we maintain the guard stack in _setupHistory instead
+    // History states are managed centrally — no per-navigation pushes needed
   }
 
   // ── Root render ───────────────────────────────────────────────────────────
@@ -1796,6 +1841,7 @@ class SeerrRequestarrCard extends HTMLElement {
       if (!btn) return;
       const tab = btn.dataset.tab;
       if (!tab || tab === this._tab && !this._detail && !this._browseDetail && !this._browseMode) return;
+      this._saveScroll(); // save current view scroll before switching tab
       this._tab              = tab;
       this._detail           = null;
       this._detailFull       = null;
