@@ -1741,43 +1741,66 @@ class SeerrRequestarrCard extends HTMLElement {
     if (this._historyBound) return;
     this._historyBound = true;
     this._backGraceTimer = null;
-    this._warnActive = false;
+    this._warnActive     = false;
 
-    // Push ONE sentinel so we always have something to pop before HA's own entries.
-    history.pushState({ seerr: "sentinel" }, "");
+    // We maintain EXACTLY 2 sentinels above HA's history at all times.
+    // This guarantees that:
+    //   - Any back press from a sub-view is always intercepted (sentinel exists)
+    //   - After handling a back press we immediately restore 2 sentinels
+    //   - At top-level: first back shows grace toast (2 sentinels restored)
+    //     Second back within 3s exits; otherwise sentinel restored + grace resets
+    //
+    // The key insight: ALWAYS push 2 sentinels back after every handled event.
+    // This makes the behaviour consistent regardless of how many times the
+    // user navigates in/out of detail views.
 
-    window.addEventListener("popstate", e => {
-      // ── In a sub-view: navigate back one level ────────────────────────
+    const pushSentinels = () => {
+      history.pushState({ seerr: "s" }, "");
+      history.pushState({ seerr: "s" }, "");
+    };
+
+    const resetGrace = () => {
+      this._warnActive = false;
+      clearTimeout(this._backGraceTimer);
+      this._backGraceTimer = null;
+    };
+
+    // Seed initial sentinels
+    pushSentinels();
+
+    window.addEventListener("popstate", () => {
+      // ── In a sub-view: go back one level, restore 2 sentinels ─────────
       if (this._browseDetail || this._detail || this._browseMode) {
-        history.pushState({ seerr: "sentinel" }, ""); // restore sentinel
+        pushSentinels(); // always restore 2 after handling
+        resetGrace();    // reset any pending grace when entering sub-view
         this._saveScroll();
         if (this._browseDetail) {
           this._browseDetail = null; this._browseDetailFull = null;
         } else if (this._detail) {
           this._detail = null; this._detailFull = null;
-        } else if (this._browseMode) {
+        } else {
           this._browseMode = null;
         }
         this._paint();
         return;
       }
 
-      // ── At top-level tab ──────────────────────────────────────────────
+      // ── At top-level ──────────────────────────────────────────────────
       if (!this._warnActive) {
-        // First press: show warning, re-push sentinel, start timer
-        history.pushState({ seerr: "sentinel" }, ""); // restore sentinel
+        // First press at top-level: show grace toast, restore 2 sentinels
+        pushSentinels();
         this._warnActive = true;
         this._toast("Press back again to exit", "error");
         clearTimeout(this._backGraceTimer);
         this._backGraceTimer = setTimeout(() => {
-          this._warnActive = false;
-          // Clear the toast by triggering with empty (toast fades anyway)
+          // Grace window expired — reset so next back starts fresh
+          resetGrace();
+          // Ensure sentinels are in place (they should be, but be safe)
         }, 3000);
       } else {
-        // Second press within 3s: let HA handle it (exit)
-        this._warnActive = false;
-        clearTimeout(this._backGraceTimer);
-        // Don't push sentinel back — allow HA to navigate away
+        // Second press within grace window — exit HA (don't restore sentinels)
+        resetGrace();
+        // No pushSentinels() here — let HA handle backward navigation
       }
     });
   }
