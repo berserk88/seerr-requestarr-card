@@ -1503,23 +1503,28 @@ class SeerrRequestarrCard extends HTMLElement {
         <div class="toast"></div>
       </div>`;
 
-    this.shadowRoot.querySelectorAll(".tab").forEach(btn =>
-      btn.addEventListener("click", () => {
-        this._tab = btn.dataset.tab;
-        // Clear ALL detail/browse state so tabs are always top-level
-        this._detail           = null;
-        this._detailFull       = null;
-        this._detailLoading    = false;
-        this._browseMode       = null;
-        this._browseDetail     = null;
-        this._browseDetailFull = null;
-        this._updateTabs();
-        this._paint();
-        if (this._tab === "requests" && !this._requests.length && !this._reqLoading) this._loadRequests();
-        if (this._tab === "trending" && !this._trendMovies.length && !this._trendLoading) this._loadTrending();
-        if (this._tab === "discover" && !this._discData.length && !this._discLoading) this._loadDiscover(1);
-      })
-    );
+    // Use a single delegated listener on the root div so it survives any
+    // innerHTML updates within .tc. Tab buttons live outside .tc so they
+    // are only destroyed if _render() is called again (setConfig).
+    this.shadowRoot.querySelector(".root")?.addEventListener("click", e => {
+      const btn = e.target.closest(".tab");
+      if (!btn) return;
+      const tab = btn.dataset.tab;
+      if (!tab || tab === this._tab && !this._detail && !this._browseDetail && !this._browseMode) return;
+      this._tab              = tab;
+      this._detail           = null;
+      this._detailFull       = null;
+      this._detailLoading    = false;
+      this._browseMode       = null;
+      this._browseDetail     = null;
+      this._browseDetailFull = null;
+      this._browseDetailLoading = false;
+      this._updateTabs();
+      this._paint();
+      if (this._tab === "requests" && !this._requests.length && !this._reqLoading) this._loadRequests();
+      if (this._tab === "trending" && !this._trendMovies.length && !this._trendLoading) this._loadTrending();
+      if (this._tab === "discover" && !this._discData.length && !this._discLoading) this._loadDiscover(1);
+    });
     this._paint();
   }
 
