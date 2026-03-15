@@ -1783,14 +1783,16 @@ class SeerrRequestarrCard extends HTMLElement {
     window.addEventListener("popstate", e => {
       const s = e.state?.seerr;
 
-      // Case A: sub-view is open → close it (NAV was on top and was just popped)
+      // Case A: sub-view is open → NAV was on top and was just popped.
+      // We landed on GRACE (already there below NAV). Do NOT pushGrace again —
+      // that would create duplicate GRACE entries, breaking subsequent graces.
       if (this._browseDetail || this._detail || this._browseMode) {
         this._cancelGrace();
         this._saveScroll();
         if      (this._browseDetail) { this._browseDetail = null; this._browseDetailFull = null; }
         else if (this._detail)       { this._detail = null; this._detailFull = null; }
         else                         { this._browseMode = null; }
-        pushGrace(); // restore GRACE so next back is intercepted
+        // GRACE is already the current entry (we landed on it) — no pushGrace needed
         this._paint();
         return;
       }
