@@ -639,17 +639,16 @@ class SeerrRequestarrCard extends HTMLElement {
     if (this._trendLoading) return;
     this._trendLoading = true;
     this._trendError   = null;
-    this._paint();
+    // Only paint if on trending tab — avoids disrupting other tabs
+    if (this._tab === "trending") this._paint();
     try {
-      // Overseerr discover endpoints only accept 'page' (20 results per page).
-      // Fetch as many pages as needed to satisfy the configured count.
       const fetchN = async (path, count) => {
         const pages   = Math.ceil(count / 20);
         const results = [];
         for (let p = 1; p <= pages; p++) {
           const data = await this._get(path, { page: p });
           results.push(...(data.results || []));
-          if ((data.results || []).length < 20) break; // no more pages
+          if ((data.results || []).length < 20) break;
         }
         return results.slice(0, count);
       };
@@ -659,14 +658,14 @@ class SeerrRequestarrCard extends HTMLElement {
       ]);
       this._trendMovies = movies;
       this._trendTV     = tv;
-      // Prefetch ratings for movie cards (TV has no ratings endpoint)
       this._fetchRatingsForItems(movies);
     } catch (e) {
       this._trendError = e.message;
     } finally {
       this._trendLoading = false;
     }
-    this._paint();
+    // Only repaint if on trending tab — avoids scroll jump on other tabs
+    if (this._tab === "trending") this._paint();
   }
 
   async _loadBrowse(type, page = 1) {
@@ -913,7 +912,7 @@ class SeerrRequestarrCard extends HTMLElement {
     this._discLoading = true;
     this._discError   = null;
     this._discData    = [];
-    this._paint(); // full paint to show spinner
+    if (this._tab === "discover") this._paint(); // full paint to show spinner
     try {
       const sections = DISCOVER_SECTIONS[this._discType];
       const sec      = sections.find(s => s.id === this._discSection) || sections[0];
@@ -923,12 +922,12 @@ class SeerrRequestarrCard extends HTMLElement {
       this._discDone = results.length < 20;
       this._discPage = 1;
       this._discLoading = false;
-      this._paint();
+      if (this._tab === "discover") this._paint();
       this._fetchRatingsForItems(results);
     } catch (e) {
       this._discLoading = false;
       this._discError   = e.message;
-      this._paint();
+      if (this._tab === "discover") this._paint();
     }
   }
 
