@@ -1,7 +1,7 @@
 /** @version 1.2.0 */
 /**
  * Seerr Requestarr Card for Home Assistant
- * https://github.com/berserk88/seerr-requestarr-card
+ * https:
  *
  * Card config options:
  *   card_width:              CSS width  (default: "100%")
@@ -9,25 +9,13 @@
  *   trending_movies_count:   titles to show in movies row (default: 20)
  *   trending_tv_count:       titles to show in TV row     (default: 20)
  *   omdb_api_key:            OMDb API key for IMDb/RT ratings on tiles
- *                            Get a free key at https://www.omdbapi.com/apikey.aspx
+ *                            Get a free key at https:
  */
 
 const PROXY  = "/api/seerr_proxy";
 const DEBUG  = "/api/seerr_debug";
 const TMDB_W = "https://image.tmdb.org/t/p/";
 
-// Overseerr /movie/{id}/ratings  returns: { rtCriticsScore, rtAudienceScore, imdbRating, imdbId }
-// OMDb API (free, 1000/day): https://www.omdbapi.com/?i={imdbId}&apikey={key}
-// We use Overseerr's own ratings endpoint — no external API key required for RT/IMDb scores
-// OMDb key is optional and enables richer IMDb vote count data on tiles
-
-// Overseerr Discover page sections.
-// Top genres by popularity (TMDB genre IDs):
-//   Movies: Action=28, Comedy=35, Drama=18, Horror=27, Sci-Fi=878,
-//           Animation=16, Romance=10749, Thriller=53, Crime=80, Documentary=99
-//   TV:     Drama=18, Comedy=35, Action/Adventure=10759, Sci-Fi/Fantasy=10765,
-//           Crime=80, Animation=16, Mystery=9648, Reality=10764,
-//           Documentary=99, Family=10751
 const DISCOVER_SECTIONS = {
   movies: [
     { id: "popular",    label: "Popular",         path: "/discover/movies",          params: {} },
@@ -62,7 +50,6 @@ const DISCOVER_SECTIONS = {
   ],
 };
 
-// RT freshness helper
 const RT_LABEL = score => score >= 75 ? { label: "Fresh", color: "#f84" }
                : score >= 60 ? { label: "Fresh", color: "#f84" }
                : { label: "Rotten", color: "#e44" };
@@ -82,444 +69,397 @@ const REQST = {
   4: { label: "Available", color: "#10b981" },
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CSS
-// ─────────────────────────────────────────────────────────────────────────────
-const CSS = `
-  @import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500&display=swap');
+const CSS = `@import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500&display=swap');
+:host {
+--bg: #0a0a0f;
+--surf: #111118;
+--surf2: #1a1a24;
+--border: rgba(255,255,255,0.07);
+--accent: #e88800;
+--accent2: #7c5cbf;
+--text: #f0eff8;
+--muted: #6b6a80;
+--r: 16px;
+--disp: 'Syne', sans-serif;
+--body: 'DM Sans', sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+.root {
+background: var(--bg);
+border-radius: var(--r);
+overflow: hidden;
+font-family: var(--body);
+color: var(--text);
+display: flex;
+flex-direction: column;
+position: relative;
+}
+.hdr {
+display: flex; align-items: center; justify-content: space-between;
+padding: 14px 18px 11px; border-bottom: 1px solid var(--border);
+background: linear-gradient(135deg,rgba(232,136,0,.09),rgba(124,92,191,.06));
+flex-shrink: 0;
+}
+.hdr-left { display: flex; align-items: center; gap: 10px; }
+.hdr-logo {
+width: 32px; height: auto;
+border-radius: 7px; flex-shrink: 0; display: block;
+}
+.hdr-name { font-family: var(--disp); font-size: 13px; font-weight: 700; letter-spacing: -.3px; }
+.hdr-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
+.hdr-stats { display: flex; gap: 7px; }
+.stat-pill {
+background: var(--surf2); border: 1px solid var(--border);
+border-radius: 20px; padding: 3px 8px; font-size: 10px; font-weight: 500;
+display: flex; align-items: center; gap: 4px;
+}
+.sdot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+.tabs {
+display: flex; background: var(--surf);
+border-bottom: 1px solid var(--border); padding: 0 14px; gap: 2px; flex-shrink: 0;
+}
+.tab {
+background: none; border: none; color: var(--muted);
+font-family: var(--body); font-size: 11px; font-weight: 500;
+padding: 10px 12px 8px; cursor: pointer;
+border-bottom: 2px solid transparent; transition: all .2s;
+display: flex; align-items: center; gap: 5px; margin-bottom: -1px;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tc { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+.trend-wrap { flex: 1; overflow-y: auto; display: flex; flex-direction: column; min-height: 0;
+scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.trend-section { flex-shrink: 0; }
+.sec-hdr {
+font-family: var(--disp); font-size: 10px; font-weight: 700;
+text-transform: uppercase; letter-spacing: 1.4px; color: var(--muted);
+padding: 11px 16px 7px; position: sticky; top: 0;
+background: var(--bg); z-index: 2;
+display: flex; align-items: center; justify-content: space-between;
+}
+.sec-hdr-btn {
+font-size: 10px; color: var(--accent); cursor: pointer; font-weight: 600;
+background: none; border: none; font-family: var(--body);
+padding: 2px 6px; border-radius: 4px; transition: background .15s;
+}
+.sec-hdr-btn:hover { background: rgba(232,136,0,.12); }
+.h-scroll {
+overflow-x: auto; overflow-y: hidden; padding: 0 16px 14px;
+scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.h-scroll::-webkit-scrollbar { height: 3px; }
+.h-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.h-row { display: flex; gap: 8px; width: max-content; }
+.browse-wrap {
+flex: 1; display: flex; flex-direction: column; min-height: 0;
+}
+.browse-hdr {
+display: flex; align-items: center; gap: 10px;
+padding: 12px 16px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+background: var(--bg);
+}
+.browse-back {
+background: none; border: none; color: var(--muted); cursor: pointer;
+font-size: 13px; font-family: var(--body); padding: 0; transition: color .2s;
+}
+.browse-back:hover { color: var(--text); }
+.browse-title { font-family: var(--disp); font-size: 14px; font-weight: 700; }
+.browse-grid {
+flex: 1; overflow-y: auto; padding: 12px 16px 16px; min-height: 0;
+scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.browse-grid::-webkit-scrollbar { width: 3px; }
+.browse-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.poster-grid {
+display: grid;
+grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+gap: 8px;
+}
+.media-card, .trend-card, .rating-card {
+background: var(--surf2); border: 1px solid var(--border);
+border-radius: 9px; overflow: hidden; cursor: pointer; transition: all .18s; position: relative;
+display: flex; flex-direction: column;
+}
+.media-card:hover, .trend-card:hover, .rating-card:hover {
+border-color: rgba(232,136,0,.5); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.45);
+}
+.media-card img, .trend-card img, .rating-card img {
+width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; background: var(--surf); flex-shrink: 0;
+}
+.trend-card img { width: 120px; height: 180px; }
+.no-poster {
+aspect-ratio: 2/3; background: var(--surf); flex-shrink: 0;
+display: flex; flex-direction: column; align-items: center; justify-content: center;
+font-size: 22px; gap: 4px; width: 100%;
+}
+.trend-card .no-poster { width: 120px; height: 180px; }
+.no-poster span { font-size: 9px; color: var(--muted); text-align: center; padding: 0 6px; }
+.card-body { display: flex; flex-direction: column; flex: 1; }
+.card-info { padding: 6px 7px 4px; flex: 1; }
+.card-title {
+font-size: 10px; font-weight: 500; line-height: 1.3;
+display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 3px;
+min-height: calc(1.3em * 2);
+}
+.card-tagline {
+font-size: 8px; color: var(--muted); line-height: 1.3; margin-bottom: 3px;
+display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+font-style: italic;
+}
+.card-meta { font-size: 9px; color: var(--muted); display: flex; align-items: center; justify-content: space-between; }
+.type-badge {
+background: rgba(124,92,191,.25); color: #b09de0;
+border-radius: 3px; padding: 1px 4px; font-size: 8px; font-weight: 600;
+text-transform: uppercase; letter-spacing: .4px;
+}
+.lang-badge {
+background: rgba(16,185,129,.15); color: #10b981;
+border-radius: 3px; padding: 1px 4px; font-size: 8px; font-weight: 600;
+letter-spacing: .2px;
+}
+.avail-dot {
+position: absolute; top: 5px; right: 5px; border-radius: 5px; padding: 2px 5px;
+font-size: 8px; font-weight: 700; backdrop-filter: blur(6px); line-height: 1;
+}
+.trend-card { width: 120px; flex-shrink: 0; }
+.trend-info { padding: 5px 6px 3px; flex: 1; }
+.trend-title {
+font-size: 9px; font-weight: 500; line-height: 1.3;
+display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+min-height: calc(1.3em * 2);
+}
+.trend-tagline {
+font-size: 7.5px; color: var(--muted); line-height: 1.3; margin-bottom: 2px;
+display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+font-style: italic;
+}
+.trend-year { font-size: 8px; color: var(--muted); margin-top: 1px; }
+.detail-outer {
+flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;
+}
+.detail-back-bar {
+display: flex; align-items: center; gap: 8px; padding: 10px 16px 8px;
+border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg);
+}
+.back-btn {
+background: none; border: none; color: var(--muted); font-family: var(--body);
+font-size: 12px; cursor: pointer; padding: 0; display: flex; align-items: center; gap: 5px; transition: color .2s;
+}
+.back-btn:hover { color: var(--text); }
+.detail-scroll { flex: 1; overflow-y: auto; min-height: 0;
+scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.detail-hero {
+position: relative; width: 100%; height: 160px; overflow: hidden; flex-shrink: 0;
+}
+.detail-backdrop {
+width: 100%; height: 100%; object-fit: cover; display: block; filter: brightness(.45);
+}
+.detail-backdrop-ph { width: 100%; height: 160px; background: var(--surf2); }
+.detail-hero-overlay {
+position: absolute; bottom: 0; left: 0; right: 0;
+background: linear-gradient(transparent, var(--bg));
+height: 80px;
+}
+.detail-body { padding: 0 16px 16px; }
+.detail-top { display: flex; gap: 14px; margin-top: -50px; margin-bottom: 14px; position: relative; z-index: 1; }
+.detail-poster { width: 90px; min-width: 90px; border-radius: 9px; overflow: hidden; box-shadow: 0 6px 24px rgba(0,0,0,.6); }
+.detail-poster img { width: 100%; display: block; }
+.detail-poster-ph {
+width: 90px; height: 135px; border-radius: 9px; background: var(--surf2);
+display: flex; align-items: center; justify-content: center; font-size: 28px;
+}
+.detail-meta-block { flex: 1; padding-top: 52px; }
+.detail-title { font-family: var(--disp); font-size: 17px; font-weight: 700; line-height: 1.2; margin-bottom: 4px; }
+.detail-year { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+.detail-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+.badge {
+background: var(--surf2); border: 1px solid var(--border);
+border-radius: 5px; padding: 3px 8px; font-size: 10px; display: flex; align-items: center; gap: 4px;
+}
+.detail-section-title {
+font-family: var(--disp); font-size: 10px; font-weight: 700; text-transform: uppercase;
+letter-spacing: 1.2px; color: var(--muted); margin-bottom: 6px; margin-top: 14px;
+}
+.detail-overview { font-size: 12px; line-height: 1.65; color: rgba(240,239,248,.7); margin-bottom: 4px; }
+.detail-info-grid {
+display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px;
+}
+.info-item { background: var(--surf2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.info-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 3px; }
+.info-value { font-size: 12px; font-weight: 500; }
+.genre-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 14px; }
+.genre-chip {
+background: rgba(232,136,0,.12); border: 1px solid rgba(232,136,0,.25);
+color: var(--accent); border-radius: 20px; padding: 3px 9px; font-size: 10px; font-weight: 500;
+}
+.req-btn {
+width: 100%; background: linear-gradient(135deg,var(--accent),#c47800);
+border: none; border-radius: 9px; padding: 12px; color: #fff;
+font-family: var(--disp); font-size: 13px; font-weight: 700;
+cursor: pointer; transition: all .18s;
+display: flex; align-items: center; justify-content: center; gap: 7px;
+}
+.req-btn:hover { opacity: .88; transform: translateY(-1px); }
+.req-btn:active { transform: none; }
+.req-btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+.req-btn.already { background: var(--surf2); border: 1px solid rgba(16,185,129,.4); color: #10b981; }
+.req-btn.sent { background: linear-gradient(135deg,#10b981,#059669); }
+.search-top { padding: 12px 16px 0; flex-shrink: 0; }
+.search-row { display: flex; gap: 8px; margin-bottom: 10px; }
+.search-input {
+flex: 1; background: var(--surf2); border: 1px solid var(--border);
+border-radius: 9px; padding: 9px 12px; color: var(--text);
+font-family: var(--body); font-size: 13px; outline: none; transition: border-color .2s;
+}
+.search-input:focus { border-color: var(--accent); }
+.search-input::placeholder { color: var(--muted); }
+.search-btn {
+background: linear-gradient(135deg,var(--accent),#c47800);
+border: none; border-radius: 9px; padding: 9px 15px; color: #fff;
+font-family: var(--disp); font-size: 12px; font-weight: 600;
+cursor: pointer; transition: opacity .2s;
+}
+.search-btn:hover { opacity: .88; }
+.search-btn:disabled { opacity: .4; cursor: not-allowed; }
+.filter-row { display: flex; gap: 6px; margin-bottom: 10px; }
+.f-chip {
+background: var(--surf2); border: 1px solid var(--border);
+border-radius: 20px; padding: 4px 11px; font-size: 11px; font-weight: 500;
+color: var(--muted); cursor: pointer; transition: all .2s;
+}
+.f-chip.active { background: rgba(232,136,0,.15); border-color: rgba(232,136,0,.4); color: var(--accent); }
+.scroll-grid {
+flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 16px 16px; min-height: 0;
+scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.scroll-grid::-webkit-scrollbar { width: 3px; }
+.scroll-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.req-wrap { flex: 1; overflow-y: auto; padding: 10px 16px; min-height: 0;
+scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.req-item {
+background: var(--surf2); border: 1px solid var(--border);
+border-radius: 9px; padding: 9px 11px; display: flex; align-items: center;
+gap: 10px; margin-bottom: 7px;
+}
+.req-thumb { width: 32px; height: 48px; border-radius: 5px; object-fit: cover; flex-shrink: 0; background: var(--surf); }
+.req-thumb-ph { width: 32px; height: 48px; border-radius: 5px; background: var(--surf); display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
+.req-info { flex: 1; min-width: 0; }
+.req-title { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+.req-meta { font-size: 10px; color: var(--muted); display: flex; gap: 6px; }
+.req-stat { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 20px; flex-shrink: 0; }
+.req-stat-dot { width: 4px; height: 4px; border-radius: 50%; }
+.state-box { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 20px; color: var(--muted); gap: 9px; font-size: 12px; text-align: center; }
+.state-icon { font-size: 26px; }
+.state-ttl { color: var(--accent); font-weight: 600; font-size: 13px; }
+.state-msg { max-width: 220px; line-height: 1.5; }
+.spinner { width: 22px; height: 22px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.retry-btn {
+background: var(--surf2); border: 1px solid var(--border); border-radius: 7px;
+padding: 5px 13px; color: var(--text); font-family: var(--body); font-size: 11px;
+cursor: pointer; transition: border-color .2s; margin-top: 4px;
+}
+.retry-btn:hover { border-color: var(--accent); }
+.dbg-link { font-size: 10px; color: var(--muted); text-decoration: underline; cursor: pointer; margin-top: 2px; }
+.rating-bar {
+display: flex; flex-wrap: nowrap; gap: 2px; padding: 3px 5px 4px;
+border-top: 1px solid var(--border); height: 22px; background: rgba(0,0,0,.25);
+margin-top: auto; flex-shrink: 0; overflow: hidden; align-items: center;
+}
+.rating-bar:empty { display: none; }
+.rb-item {
+font-size: 7.5px; font-weight: 600; white-space: nowrap;
+background: rgba(255,255,255,.06); border-radius: 3px; padding: 1px 3px;
+color: var(--text); flex-shrink: 0;
+}
+.rb-tmdb { color: #e88800; }
+.rb-imdb { color: #f5c518; }
+.rb-rt { }
+.rb-rta { color: #a8d8a8; }
+.disc-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.disc-controls {
+display: flex; flex-direction: column; gap: 0; flex-shrink: 0;
+border-bottom: 1px solid var(--border); background: var(--surf);
+}
+.disc-type-row {
+display: flex; padding: 8px 14px 0; gap: 6px;
+}
+.disc-type-btn {
+background: none; border: none; color: var(--muted);
+font-family: var(--body); font-size: 12px; font-weight: 600;
+padding: 6px 14px 8px; cursor: pointer;
+border-bottom: 2px solid transparent; transition: all .2s; margin-bottom: -1px;
+}
+.disc-type-btn:hover { color: var(--text); }
+.disc-type-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.disc-section-row {
+display: flex; gap: 5px; padding: 7px 14px; overflow-x: auto;
+scrollbar-width: none;
+}
+.disc-section-row::-webkit-scrollbar { display: none; }
+.disc-sec-btn {
+background: var(--surf2); border: 1px solid var(--border);
+border-radius: 20px; padding: 4px 11px; font-size: 10px; font-weight: 500;
+color: var(--muted); cursor: pointer; transition: all .18s; white-space: nowrap; flex-shrink: 0;
+}
+.disc-sec-btn.active { background: rgba(232,136,0,.15); border-color: rgba(232,136,0,.4); color: var(--accent); }
+.disc-genre-btn { background: rgba(124,92,191,.1); border-color: rgba(124,92,191,.2); }
+.disc-genre-btn.active { background: rgba(124,92,191,.25); border-color: rgba(124,92,191,.5); color: #c0a8f0; }
+.disc-sec-divider {
+color: var(--border); font-size: 14px; line-height: 1;
+display: flex; align-items: center; padding: 0 4px; flex-shrink: 0; user-select: none;
+}
+.disc-grid {
+flex: 1; overflow-y: auto; padding: 10px 14px 14px; min-height: 0;
+scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.disc-grid::-webkit-scrollbar { width: 3px; }
+.disc-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+.disc-footer { display: flex; justify-content: center; padding: 10px 0 4px; }
+.detail-ratings {
+display: grid;
+grid-template-columns: repeat(3, 1fr);
+gap: 7px; margin-bottom: 14px;
+}
+.rating-block:nth-child(3n+1):last-child,
+.rating-block:nth-child(3n+2):last-child {
+}
+.rating-block {
+background: var(--surf2); border: 1px solid var(--border);
+border-radius: 9px; padding: 10px 6px; display: flex; flex-direction: column;
+align-items: center; justify-content: center;
+min-height: 72px;
+}
+.rating-logo { font-size: 15px; margin-bottom: 3px; line-height: 1; }
+.rating-score { font-family: var(--disp); font-size: 18px; font-weight: 800; line-height: 1; white-space: nowrap; }
+.rating-sublabel { font-size: 8px; color: var(--muted); margin-top: 3px; text-align: center; letter-spacing: .3px; white-space: nowrap; }
+.toast {
+position: absolute; bottom: 12px; left: 50%;
+transform: translateX(-50%) translateY(50px);
+background: var(--surf2); border: 1px solid var(--border);
+border-radius: 9px; padding: 8px 16px; font-size: 12px; font-weight: 500;
+white-space: nowrap; transition: transform .28s cubic-bezier(.34,1.56,.64,1);
+z-index: 50; pointer-events: none; box-shadow: 0 6px 24px rgba(0,0,0,.4);
+}
+.toast.show { transform: translateX(-50%) translateY(0); }
+.toast.success { border-color: rgba(16,185,129,.5); color: #10b981; }
+.toast.error { border-color: rgba(232,136,0,.5); color: var(--accent); }`;
 
-  :host {
-    --bg:      #0a0a0f;
-    --surf:    #111118;
-    --surf2:   #1a1a24;
-    --border:  rgba(255,255,255,0.07);
-    --accent:  #e88800;
-    --accent2: #7c5cbf;
-    --text:    #f0eff8;
-    --muted:   #6b6a80;
-    --r:       16px;
-    --disp:    'Syne', sans-serif;
-    --body:    'DM Sans', sans-serif;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-
-  .root {
-    background: var(--bg);
-    border-radius: var(--r);
-    overflow: hidden;
-    font-family: var(--body);
-    color: var(--text);
-    display: flex;
-    flex-direction: column;
-    position: relative;
-  }
-
-  /* ── Header ── */
-  .hdr {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 18px 11px; border-bottom: 1px solid var(--border);
-    background: linear-gradient(135deg,rgba(232,136,0,.09),rgba(124,92,191,.06));
-    flex-shrink: 0;
-  }
-  .hdr-left  { display: flex; align-items: center; gap: 10px; }
-  .hdr-logo  {
-    width: 32px; height: auto;
-    border-radius: 7px; flex-shrink: 0; display: block;
-  }
-  .hdr-name  { font-family: var(--disp); font-size: 13px; font-weight: 700; letter-spacing: -.3px; }
-  .hdr-sub   { font-size: 10px; color: var(--muted); margin-top: 1px; }
-  .hdr-stats { display: flex; gap: 7px; }
-  .stat-pill {
-    background: var(--surf2); border: 1px solid var(--border);
-    border-radius: 20px; padding: 3px 8px; font-size: 10px; font-weight: 500;
-    display: flex; align-items: center; gap: 4px;
-  }
-  .sdot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
-
-  /* ── Tabs ── */
-  .tabs {
-    display: flex; background: var(--surf);
-    border-bottom: 1px solid var(--border); padding: 0 14px; gap: 2px; flex-shrink: 0;
-  }
-  .tab {
-    background: none; border: none; color: var(--muted);
-    font-family: var(--body); font-size: 11px; font-weight: 500;
-    padding: 10px 12px 8px; cursor: pointer;
-    border-bottom: 2px solid transparent; transition: all .2s;
-    display: flex; align-items: center; gap: 5px; margin-bottom: -1px;
-  }
-  .tab:hover { color: var(--text); }
-  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-
-  /* ── Tab content ── */
-  .tc { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
-
-  /* ── Trending ── */
-  .trend-wrap { flex: 1; overflow-y: auto; display: flex; flex-direction: column; min-height: 0;
-    scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-  .trend-section { flex-shrink: 0; }
-  .sec-hdr {
-    font-family: var(--disp); font-size: 10px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 1.4px; color: var(--muted);
-    padding: 11px 16px 7px; position: sticky; top: 0;
-    background: var(--bg); z-index: 2;
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  .sec-hdr-btn {
-    font-size: 10px; color: var(--accent); cursor: pointer; font-weight: 600;
-    background: none; border: none; font-family: var(--body);
-    padding: 2px 6px; border-radius: 4px; transition: background .15s;
-  }
-  .sec-hdr-btn:hover { background: rgba(232,136,0,.12); }
-  .h-scroll {
-    overflow-x: auto; overflow-y: hidden; padding: 0 16px 14px;
-    scrollbar-width: thin; scrollbar-color: var(--border) transparent;
-  }
-  .h-scroll::-webkit-scrollbar { height: 3px; }
-  .h-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-  .h-row { display: flex; gap: 8px; width: max-content; }
-
-  /* ── Browse (full-screen section view) ── */
-  .browse-wrap {
-    flex: 1; display: flex; flex-direction: column; min-height: 0;
-  }
-  .browse-hdr {
-    display: flex; align-items: center; gap: 10px;
-    padding: 12px 16px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;
-    background: var(--bg);
-  }
-  .browse-back {
-    background: none; border: none; color: var(--muted); cursor: pointer;
-    font-size: 13px; font-family: var(--body); padding: 0; transition: color .2s;
-  }
-  .browse-back:hover { color: var(--text); }
-  .browse-title { font-family: var(--disp); font-size: 14px; font-weight: 700; }
-  .browse-grid {
-    flex: 1; overflow-y: auto; padding: 12px 16px 16px; min-height: 0;
-    scrollbar-width: thin; scrollbar-color: var(--border) transparent;
-  }
-  .browse-grid::-webkit-scrollbar { width: 3px; }
-  .browse-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-  .poster-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    gap: 8px;
-  }
-
-  /* ── Poster cards ── */
-  /* All card types share the same flex-column layout so the rating bar
-     always pins to the bottom regardless of title length */
-  .media-card, .trend-card, .rating-card {
-    background: var(--surf2); border: 1px solid var(--border);
-    border-radius: 9px; overflow: hidden; cursor: pointer; transition: all .18s; position: relative;
-    display: flex; flex-direction: column;
-  }
-  .media-card:hover, .trend-card:hover, .rating-card:hover {
-    border-color: rgba(232,136,0,.5); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.45);
-  }
-  .media-card img, .trend-card img, .rating-card img {
-    width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; background: var(--surf); flex-shrink: 0;
-  }
-  .trend-card img { width: 120px; height: 180px; }
-  .no-poster {
-    aspect-ratio: 2/3; background: var(--surf); flex-shrink: 0;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    font-size: 22px; gap: 4px; width: 100%;
-  }
-  .trend-card .no-poster { width: 120px; height: 180px; }
-  .no-poster span { font-size: 9px; color: var(--muted); text-align: center; padding: 0 6px; }
-  /* card-body grows to fill remaining space, pushing rating-bar to bottom */
-  .card-body { display: flex; flex-direction: column; flex: 1; }
-  .card-info  { padding: 6px 7px 4px; flex: 1; }
-  .card-title {
-    font-size: 10px; font-weight: 500; line-height: 1.3;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-bottom: 3px;
-    /* Reserve space for exactly 2 lines so all cards have identical info height */
-    min-height: calc(1.3em * 2);
-  }
-  .card-tagline {
-    font-size: 8px; color: var(--muted); line-height: 1.3; margin-bottom: 3px;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-    font-style: italic;
-  }
-  .card-meta { font-size: 9px; color: var(--muted); display: flex; align-items: center; justify-content: space-between; }
-  .type-badge {
-    background: rgba(124,92,191,.25); color: #b09de0;
-    border-radius: 3px; padding: 1px 4px; font-size: 8px; font-weight: 600;
-    text-transform: uppercase; letter-spacing: .4px;
-  }
-  .lang-badge {
-    background: rgba(16,185,129,.15); color: #10b981;
-    border-radius: 3px; padding: 1px 4px; font-size: 8px; font-weight: 600;
-    letter-spacing: .2px;
-  }
-  .avail-dot {
-    position: absolute; top: 5px; right: 5px; border-radius: 5px; padding: 2px 5px;
-    font-size: 8px; font-weight: 700; backdrop-filter: blur(6px); line-height: 1;
-  }
-  /* Trend card: narrow horizontal scroll version */
-  .trend-card { width: 120px; flex-shrink: 0; }
-  .trend-info { padding: 5px 6px 3px; flex: 1; }
-  .trend-title {
-    font-size: 9px; font-weight: 500; line-height: 1.3;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-    min-height: calc(1.3em * 2);
-  }
-  .trend-tagline {
-    font-size: 7.5px; color: var(--muted); line-height: 1.3; margin-bottom: 2px;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-    font-style: italic;
-  }
-  .trend-year { font-size: 8px; color: var(--muted); margin-top: 1px; }
-
-  /* ── Detail view ── */
-  .detail-outer {
-    flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0;
-  }
-  .detail-back-bar {
-    display: flex; align-items: center; gap: 8px; padding: 10px 16px 8px;
-    border-bottom: 1px solid var(--border); flex-shrink: 0; background: var(--bg);
-  }
-  .back-btn {
-    background: none; border: none; color: var(--muted); font-family: var(--body);
-    font-size: 12px; cursor: pointer; padding: 0; display: flex; align-items: center; gap: 5px; transition: color .2s;
-  }
-  .back-btn:hover { color: var(--text); }
-  .detail-scroll { flex: 1; overflow-y: auto; min-height: 0;
-    scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-  .detail-hero {
-    position: relative; width: 100%; height: 160px; overflow: hidden; flex-shrink: 0;
-  }
-  .detail-backdrop {
-    width: 100%; height: 100%; object-fit: cover; display: block; filter: brightness(.45);
-  }
-  .detail-backdrop-ph { width: 100%; height: 160px; background: var(--surf2); }
-  .detail-hero-overlay {
-    position: absolute; bottom: 0; left: 0; right: 0;
-    background: linear-gradient(transparent, var(--bg));
-    height: 80px;
-  }
-  .detail-body { padding: 0 16px 16px; }
-  .detail-top { display: flex; gap: 14px; margin-top: -50px; margin-bottom: 14px; position: relative; z-index: 1; }
-  .detail-poster { width: 90px; min-width: 90px; border-radius: 9px; overflow: hidden; box-shadow: 0 6px 24px rgba(0,0,0,.6); }
-  .detail-poster img { width: 100%; display: block; }
-  .detail-poster-ph {
-    width: 90px; height: 135px; border-radius: 9px; background: var(--surf2);
-    display: flex; align-items: center; justify-content: center; font-size: 28px;
-  }
-  .detail-meta-block { flex: 1; padding-top: 52px; }
-  .detail-title { font-family: var(--disp); font-size: 17px; font-weight: 700; line-height: 1.2; margin-bottom: 4px; }
-  .detail-year  { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
-  .detail-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
-  .badge {
-    background: var(--surf2); border: 1px solid var(--border);
-    border-radius: 5px; padding: 3px 8px; font-size: 10px; display: flex; align-items: center; gap: 4px;
-  }
-  .detail-section-title {
-    font-family: var(--disp); font-size: 10px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 1.2px; color: var(--muted); margin-bottom: 6px; margin-top: 14px;
-  }
-  .detail-overview { font-size: 12px; line-height: 1.65; color: rgba(240,239,248,.7); margin-bottom: 4px; }
-  .detail-info-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px;
-  }
-  .info-item { background: var(--surf2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
-  .info-label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 3px; }
-  .info-value { font-size: 12px; font-weight: 500; }
-  .genre-row  { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 14px; }
-  .genre-chip {
-    background: rgba(232,136,0,.12); border: 1px solid rgba(232,136,0,.25);
-    color: var(--accent); border-radius: 20px; padding: 3px 9px; font-size: 10px; font-weight: 500;
-  }
-  .req-btn {
-    width: 100%; background: linear-gradient(135deg,var(--accent),#c47800);
-    border: none; border-radius: 9px; padding: 12px; color: #fff;
-    font-family: var(--disp); font-size: 13px; font-weight: 700;
-    cursor: pointer; transition: all .18s;
-    display: flex; align-items: center; justify-content: center; gap: 7px;
-  }
-  .req-btn:hover    { opacity: .88; transform: translateY(-1px); }
-  .req-btn:active   { transform: none; }
-  .req-btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
-  .req-btn.already  { background: var(--surf2); border: 1px solid rgba(16,185,129,.4); color: #10b981; }
-  .req-btn.sent     { background: linear-gradient(135deg,#10b981,#059669); }
-
-  /* ── Search ── */
-  .search-top   { padding: 12px 16px 0; flex-shrink: 0; }
-  .search-row   { display: flex; gap: 8px; margin-bottom: 10px; }
-  .search-input {
-    flex: 1; background: var(--surf2); border: 1px solid var(--border);
-    border-radius: 9px; padding: 9px 12px; color: var(--text);
-    font-family: var(--body); font-size: 13px; outline: none; transition: border-color .2s;
-  }
-  .search-input:focus { border-color: var(--accent); }
-  .search-input::placeholder { color: var(--muted); }
-  .search-btn {
-    background: linear-gradient(135deg,var(--accent),#c47800);
-    border: none; border-radius: 9px; padding: 9px 15px; color: #fff;
-    font-family: var(--disp); font-size: 12px; font-weight: 600;
-    cursor: pointer; transition: opacity .2s;
-  }
-  .search-btn:hover    { opacity: .88; }
-  .search-btn:disabled { opacity: .4; cursor: not-allowed; }
-  .filter-row { display: flex; gap: 6px; margin-bottom: 10px; }
-  .f-chip {
-    background: var(--surf2); border: 1px solid var(--border);
-    border-radius: 20px; padding: 4px 11px; font-size: 11px; font-weight: 500;
-    color: var(--muted); cursor: pointer; transition: all .2s;
-  }
-  .f-chip.active { background: rgba(232,136,0,.15); border-color: rgba(232,136,0,.4); color: var(--accent); }
-  .scroll-grid {
-    flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 16px 16px; min-height: 0;
-    scrollbar-width: thin; scrollbar-color: var(--border) transparent;
-  }
-  .scroll-grid::-webkit-scrollbar { width: 3px; }
-  .scroll-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-  /* ── Requests ── */
-  .req-wrap { flex: 1; overflow-y: auto; padding: 10px 16px; min-height: 0;
-    scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-  .req-item {
-    background: var(--surf2); border: 1px solid var(--border);
-    border-radius: 9px; padding: 9px 11px; display: flex; align-items: center;
-    gap: 10px; margin-bottom: 7px;
-  }
-  .req-thumb { width: 32px; height: 48px; border-radius: 5px; object-fit: cover; flex-shrink: 0; background: var(--surf); }
-  .req-thumb-ph { width: 32px; height: 48px; border-radius: 5px; background: var(--surf); display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; }
-  .req-info  { flex: 1; min-width: 0; }
-  .req-title { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
-  .req-meta  { font-size: 10px; color: var(--muted); display: flex; gap: 6px; }
-  .req-stat  { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 20px; flex-shrink: 0; }
-  .req-stat-dot { width: 4px; height: 4px; border-radius: 50%; }
-
-  /* ── State boxes ── */
-  .state-box { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 20px; color: var(--muted); gap: 9px; font-size: 12px; text-align: center; }
-  .state-icon { font-size: 26px; }
-  .state-ttl  { color: var(--accent); font-weight: 600; font-size: 13px; }
-  .state-msg  { max-width: 220px; line-height: 1.5; }
-  .spinner    { width: 22px; height: 22px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .retry-btn  {
-    background: var(--surf2); border: 1px solid var(--border); border-radius: 7px;
-    padding: 5px 13px; color: var(--text); font-family: var(--body); font-size: 11px;
-    cursor: pointer; transition: border-color .2s; margin-top: 4px;
-  }
-  .retry-btn:hover { border-color: var(--accent); }
-  .dbg-link { font-size: 10px; color: var(--muted); text-decoration: underline; cursor: pointer; margin-top: 2px; }
-
-  /* ── Rating bar on cards ── */
-  .rating-bar {
-    display: flex; flex-wrap: nowrap; gap: 2px; padding: 3px 5px 4px;
-    border-top: 1px solid var(--border); height: 22px; background: rgba(0,0,0,.25);
-    margin-top: auto; flex-shrink: 0; overflow: hidden; align-items: center;
-  }
-  .rating-bar:empty { display: none; }
-  .rb-item {
-    font-size: 7.5px; font-weight: 600; white-space: nowrap;
-    background: rgba(255,255,255,.06); border-radius: 3px; padding: 1px 3px;
-    color: var(--text); flex-shrink: 0;
-  }
-  .rb-tmdb { color: #e88800; }
-  .rb-imdb { color: #f5c518; }
-  .rb-rt   { }
-  .rb-rta  { color: #a8d8a8; }
-
-  /* ── Discover tab ── */
-  .disc-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-  .disc-controls {
-    display: flex; flex-direction: column; gap: 0; flex-shrink: 0;
-    border-bottom: 1px solid var(--border); background: var(--surf);
-  }
-  .disc-type-row {
-    display: flex; padding: 8px 14px 0; gap: 6px;
-  }
-  .disc-type-btn {
-    background: none; border: none; color: var(--muted);
-    font-family: var(--body); font-size: 12px; font-weight: 600;
-    padding: 6px 14px 8px; cursor: pointer;
-    border-bottom: 2px solid transparent; transition: all .2s; margin-bottom: -1px;
-  }
-  .disc-type-btn:hover { color: var(--text); }
-  .disc-type-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
-  .disc-section-row {
-    display: flex; gap: 5px; padding: 7px 14px; overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .disc-section-row::-webkit-scrollbar { display: none; }
-  .disc-sec-btn {
-    background: var(--surf2); border: 1px solid var(--border);
-    border-radius: 20px; padding: 4px 11px; font-size: 10px; font-weight: 500;
-    color: var(--muted); cursor: pointer; transition: all .18s; white-space: nowrap; flex-shrink: 0;
-  }
-  .disc-sec-btn.active { background: rgba(232,136,0,.15); border-color: rgba(232,136,0,.4); color: var(--accent); }
-  /* Genre pills: slightly different tint to distinguish from core sections */
-  .disc-genre-btn { background: rgba(124,92,191,.1); border-color: rgba(124,92,191,.2); }
-  .disc-genre-btn.active { background: rgba(124,92,191,.25); border-color: rgba(124,92,191,.5); color: #c0a8f0; }
-  .disc-sec-divider {
-    color: var(--border); font-size: 14px; line-height: 1;
-    display: flex; align-items: center; padding: 0 4px; flex-shrink: 0; user-select: none;
-  }
-  .disc-grid {
-    flex: 1; overflow-y: auto; padding: 10px 14px 14px; min-height: 0;
-    scrollbar-width: thin; scrollbar-color: var(--border) transparent;
-  }
-  .disc-grid::-webkit-scrollbar { width: 3px; }
-  .disc-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-  /* .rating-card styles merged into unified card CSS above */
-  .disc-footer { display: flex; justify-content: center; padding: 10px 0 4px; }
-
-  /* Ratings in detail view */
-  .detail-ratings {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 7px; margin-bottom: 14px;
-    /* All rating blocks are identical width/height via the grid */
-  }
-  /* Ensure exactly 3 per row regardless of count */
-  .rating-block:nth-child(3n+1):last-child,
-  .rating-block:nth-child(3n+2):last-child {
-    /* Orphaned blocks still look tidy */
-  }
-  .rating-block {
-    background: var(--surf2); border: 1px solid var(--border);
-    border-radius: 9px; padding: 10px 6px; display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    min-height: 72px; /* fixed height so all blocks are the same size */
-  }
-  .rating-logo  { font-size: 15px; margin-bottom: 3px; line-height: 1; }
-  .rating-score { font-family: var(--disp); font-size: 18px; font-weight: 800; line-height: 1; white-space: nowrap; }
-  .rating-sublabel { font-size: 8px; color: var(--muted); margin-top: 3px; text-align: center; letter-spacing: .3px; white-space: nowrap; }
-
-  /* ── Toast ── */
-  .toast {
-    position: absolute; bottom: 12px; left: 50%;
-    transform: translateX(-50%) translateY(50px);
-    background: var(--surf2); border: 1px solid var(--border);
-    border-radius: 9px; padding: 8px 16px; font-size: 12px; font-weight: 500;
-    white-space: nowrap; transition: transform .28s cubic-bezier(.34,1.56,.64,1);
-    z-index: 50; pointer-events: none; box-shadow: 0 6px 24px rgba(0,0,0,.4);
-  }
-  .toast.show    { transform: translateX(-50%) translateY(0); }
-  .toast.success { border-color: rgba(16,185,129,.5); color: #10b981; }
-  .toast.error   { border-color: rgba(232,136,0,.5); color: var(--accent); }
-`;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Card
-// ─────────────────────────────────────────────────────────────────────────────
+const LANGS = { en:"English", ja:"Japanese", ko:"Korean", zh:"Chinese", fr:"French", es:"Spanish", de:"German", it:"Italian", pt:"Portuguese", ru:"Russian", ar:"Arabic", hi:"Hindi", th:"Thai", tr:"Turkish", pl:"Polish", nl:"Dutch", sv:"Swedish", da:"Danish", no:"Norwegian", fi:"Finnish", cs:"Czech", hu:"Hungarian", ro:"Romanian", id:"Indonesian", vi:"Vietnamese", he:"Hebrew", fa:"Persian", uk:"Ukrainian", el:"Greek", bg:"Bulgarian" };
 class SeerrRequestarrCard extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
     this._hass          = null;
     this._cfg           = {};
-    this._tab           = "trending";   // default to trending first
+    this._tab           = "trending";
     this._initialized   = false;
-    // detail / browse state
-    this._detail        = null;         // media object being shown in detail
-    this._detailFull    = null;         // enriched details fetched from /movie or /tv
+
+    this._detail        = null;
+    this._detailFull    = null;
     this._detailLoading = false;
-    this._browseMode    = null;         // null | "movies" | "tv"
+    this._browseMode    = null;
     this._browseData    = [];
     this._browseLoading = false;
     this._browsePage    = 1;
@@ -527,7 +467,7 @@ class SeerrRequestarrCard extends HTMLElement {
     this._browseDetail        = null;
     this._browseDetailFull    = null;
     this._browseDetailLoading = false;
-    // data
+
     this._trendMovies   = [];
     this._trendTV       = [];
     this._trendLoading  = false;
@@ -541,18 +481,18 @@ class SeerrRequestarrCard extends HTMLElement {
     this._reqError      = null;
     this._pending       = 0;
     this._total         = 0;
-    // Discover tab state
-    this._discType      = "movies";   // "movies" | "tv"
-    this._discSection   = "popular";  // section id
+
+    this._discType      = "movies";
+    this._discSection   = "popular";
     this._discData      = [];
     this._discLoading   = false;
     this._discError     = null;
     this._discPage      = 1;
     this._discDone      = false;
-    this._ratingsCache  = {};         // tmdbId -> ratings object
-    this._historyBound  = false;       // whether popstate listener is set up
-    this._warnActive    = false;       // back-button grace warning showing
-    this._scrollPos     = {};          // { key: scrollTop } remembered scroll positions
+    this._ratingsCache  = {};
+    this._historyBound  = false;
+    this._warnActive    = false;
+    this._scrollPos     = {};
   }
 
   static getStubConfig() {
@@ -562,7 +502,7 @@ class SeerrRequestarrCard extends HTMLElement {
   setConfig(cfg) {
     const prev = this._cfg;
     this._cfg  = cfg || {};
-    // If counts changed after init, reload trending
+
     if (this._initialized && this._hass &&
         (prev.trending_movies_count !== cfg.trending_movies_count ||
          prev.trending_tv_count     !== cfg.trending_tv_count)) {
@@ -580,21 +520,19 @@ class SeerrRequestarrCard extends HTMLElement {
       this._loadRequests();
       this._loadDiscover(1);
       this._setupHistory();
-      // Auto-refresh requests every 30s so status changes appear promptly
+
       this._reqRefreshInterval = setInterval(() => {
         this._loadRequests();
-      }, 30000);
+      }, 120000);
     }
     this._syncStats();
   }
 
-  // ── Config ────────────────────────────────────────────────────────────────
   get _W()  { return this._cfg.card_width  || "100%";  }
   get _H()  { return this._cfg.card_height || "580px"; }
   get _MC() { return Math.max(1, parseInt(this._cfg.trending_movies_count) || 20); }
   get _TC() { return Math.max(1, parseInt(this._cfg.trending_tv_count)     || 20); }
 
-  // ── Stats ─────────────────────────────────────────────────────────────────
   _syncStats() {
     if (!this._hass) return;
     const ss = Object.values(this._hass.states);
@@ -608,7 +546,6 @@ class SeerrRequestarrCard extends HTMLElement {
     if (et) et.textContent = this._total;
   }
 
-  // ── API ───────────────────────────────────────────────────────────────────
   async _get(path, params = {}) {
     const url = new URL(PROXY + path, window.location.origin);
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v)));
@@ -633,13 +570,11 @@ class SeerrRequestarrCard extends HTMLElement {
     return r.json();
   }
 
-  // ── Loaders ───────────────────────────────────────────────────────────────
-
   async _loadTrending() {
     if (this._trendLoading) return;
     this._trendLoading = true;
     this._trendError   = null;
-    // Only paint if on trending tab — avoids disrupting other tabs
+
     if (this._tab === "trending") this._paint();
     try {
       const fetchN = async (path, count) => {
@@ -658,25 +593,24 @@ class SeerrRequestarrCard extends HTMLElement {
       ]);
       this._trendMovies = movies;
       this._trendTV     = tv;
-      this._fetchRatingsForItems(movies);
+      if(this._tab==="trending") this._fetchRatingsForItems(movies);
     } catch (e) {
       this._trendError = e.message;
     } finally {
       this._trendLoading = false;
     }
-    // Only repaint if on trending tab — avoids scroll jump on other tabs
+
     if (this._tab === "trending") this._paint();
   }
 
   async _loadBrowse(type, page = 1) {
     this._browseLoading = true;
     if (page === 1) {
-      // First load — full paint is fine, no scroll to preserve
+
       this._browseData = [];
       this._paint();
     } else {
-      // Subsequent pages — only swap the footer button to a spinner,
-      // don't touch the grid so scroll position is preserved
+
       const footer = this.shadowRoot.querySelector(".browse-footer");
       if (footer) footer.innerHTML = `<div class="spinner" style="width:22px;height:22px;margin:0 auto"></div>`;
     }
@@ -689,16 +623,15 @@ class SeerrRequestarrCard extends HTMLElement {
         this._browseDone = results.length < 20;
         this._browsePage = page;
         this._browseLoading = false;
-        this._paint(); // full paint only on first page
+        this._paint();
         return;
       }
-      // Append new cards to existing grid without replacing it
+
       this._browseData.push(...results);
       this._browseDone = results.length < 20;
       this._browsePage = page;
       this._browseLoading = false;
-      // Surgically append new cards to the grid — footer is a sibling AFTER
-      // the grid, so appending to the grid never displaces it.
+
       const grid = this.shadowRoot.querySelector(".browse-grid .poster-grid");
       if (grid) {
         const frag = document.createDocumentFragment();
@@ -711,7 +644,7 @@ class SeerrRequestarrCard extends HTMLElement {
         });
         grid.appendChild(frag);
       }
-      // Update the footer (sibling of grid, already at bottom)
+
       const footer2 = this.shadowRoot.querySelector(".browse-footer");
       if (footer2) {
         footer2.innerHTML = this._browseDone
@@ -734,7 +667,7 @@ class SeerrRequestarrCard extends HTMLElement {
     if (this._reqLoading) return;
     this._reqLoading = true;
     this._reqError   = null;
-    // Only show loading spinner if we're actually on the requests tab
+
     if (this._tab === "requests") this._paint();
     try {
       const data = await this._get("/request", { take: 25, skip: 0, filter: "all" });
@@ -752,7 +685,7 @@ class SeerrRequestarrCard extends HTMLElement {
         })
       );
       this._requests = enriched;
-      // Prefetch ratings for any movie requests
+
       this._fetchRatingsForItems(
         enriched.map(r => ({ ...r._d, mediaType: r.type || r.media?.mediaType })).filter(Boolean)
       );
@@ -761,19 +694,18 @@ class SeerrRequestarrCard extends HTMLElement {
     } finally {
       this._reqLoading = false;
     }
-    // Only repaint the full UI if on requests tab — avoids disrupting
-    // surgical updates on other tabs (e.g. discover load-more in progress)
+
     if (this._tab === "requests") {
       this._paint();
     } else {
-      // Just update the stat counters if visible
+
       this._syncStats();
     }
   }
 
   async _loadDetail(media) {
     this._cancelGrace();
-    this._pushNav();    // push nav entry for back button
+    this._pushNav();
     this._detail        = media;
     this._detailFull    = null;
     this._detailLoading = true;
@@ -812,22 +744,18 @@ class SeerrRequestarrCard extends HTMLElement {
     }
   }
 
-  // ── Discover loaders ──────────────────────────────────────────────────────
-
-  // Surgically update only .disc-grid, leaving .disc-controls (and its
-  // scroll position) completely untouched. Used for section/genre switches.
   async _loadDiscoverGrid(page = 1) {
-    // Guard: ignore if already loading (prevents double-tap scroll jump)
+
     if (this._discLoading) return;
     this._discLoading = true;
 
     const grid = this.shadowRoot.querySelector(".disc-grid");
 
     if (page === 1) {
-      // Full replace — show spinner, scroll position irrelevant
+
       if (grid) grid.innerHTML = `<div class="state-box"><div class="spinner"></div><span>Loading…</span></div>`;
     } else {
-      // Load more — just show spinner in footer, DON'T touch the grid
+
       const footer = grid?.querySelector(".disc-footer");
       if (footer) {
         footer.innerHTML = `<div class="spinner" style="width:22px;height:22px;margin:0 auto"></div>`;
@@ -850,7 +778,6 @@ class SeerrRequestarrCard extends HTMLElement {
       this._discPage = page;
       this._discLoading = false;
 
-      // ── Render ────────────────────────────────────────────────────────
       const liveGrid = this.shadowRoot.querySelector(".disc-grid");
       if (!liveGrid) return;
 
@@ -860,7 +787,7 @@ class SeerrRequestarrCard extends HTMLElement {
       };
 
       if (page === 1) {
-        // Full grid rebuild
+
         const footerHtml = this._discDone
           ? `<div class="disc-footer"></div>`
           : `<div class="disc-footer"><button class="retry-btn" data-action="disc-more">Load more</button></div>`;
@@ -869,7 +796,7 @@ class SeerrRequestarrCard extends HTMLElement {
           c.addEventListener("click", () => this._openDiscoverDetail(c)));
         bindFooter(liveGrid);
       } else {
-        // Append new cards to existing grid (scroll position preserved)
+
         const posterGrid = liveGrid.querySelector(".poster-grid");
         if (posterGrid) {
           const frag = document.createDocumentFragment();
@@ -891,8 +818,6 @@ class SeerrRequestarrCard extends HTMLElement {
         }
       }
 
-      // Fetch ratings AFTER cards are in the DOM so _updateRatingBadge works.
-      // Don't await — let it fill in asynchronously without blocking.
       this._fetchRatingsForItems(results);
 
     } catch (e) {
@@ -904,15 +829,14 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   async _loadDiscover(page = 1) {
-    // Page 1: full repaint is fine (new section/tab, no scroll to preserve)
-    // Page > 1: always delegate to _loadDiscoverGrid which handles scroll correctly
+
     if (page > 1) { this._loadDiscoverGrid(page); return; }
 
     if (this._discLoading) return;
     this._discLoading = true;
     this._discError   = null;
     this._discData    = [];
-    if (this._tab === "discover") this._paint(); // full paint to show spinner
+    if (this._tab === "discover") this._paint();
     try {
       const sections = DISCOVER_SECTIONS[this._discType];
       const sec      = sections.find(s => s.id === this._discSection) || sections[0];
@@ -932,23 +856,22 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   async _fetchRatingsForItems(items) {
-    // Overseerr's /movie/{id}/ratings returns RT data only:
-    // { criticsRating, criticsScore, audienceRating, audienceScore }
-    // No IMDb data. IMDb comes from OMDb API if omdb_api_key is configured.
-    // TV shows: TMDB voteAverage only (already in list data, no extra call).
+
+    const TTL=600000,now=Date.now();
     const movies = items.filter(item =>
-      item.mediaType !== "tv" && !this._ratingsCache[item.id]
+      item.mediaType !== "tv" &&
+      (!this._ratingsCache[item.id] || now-(this._ratingsCache[item.id]._ts||0)>TTL)
     );
     await Promise.all(
       movies.map(async item => {
         try {
           const r = await this._get(`/movie/${item.id}/ratings`);
-          // Try OMDb for IMDb rating if key configured and imdbId available
+
           if (this._cfg.omdb_api_key && item.externalIds?.imdbId) {
             const imdb = await this._fetchOmdb(item.externalIds.imdbId);
             if (imdb) r._imdb = imdb;
           }
-          this._ratingsCache[item.id] = r;
+          this._ratingsCache[item.id] = {...r, _ts:Date.now()};
           this._updateRatingBadge(item.id, item.voteAverage, r);
         } catch {}
       })
@@ -956,8 +879,7 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   async _fetchOmdb(imdbId) {
-    // OMDb has permissive CORS — call directly from browser, no proxy needed.
-    // Returns the IMDb rating string e.g. "8.1", or null.
+
     if (!this._cfg.omdb_api_key || !imdbId) return null;
     try {
       const res = await fetch(`https://www.omdbapi.com/?i=${imdbId}&apikey=${encodeURIComponent(this._cfg.omdb_api_key)}`);
@@ -968,8 +890,7 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   _updateRatingBadge(tmdbId, tmdbScore, ratings) {
-    // Find card in the live DOM and update its rating bar in place.
-    // Use innerHTML on the container (not outerHTML) to avoid losing the element.
+
     const card = this.shadowRoot.querySelector(`[data-id="${tmdbId}"]`);
     if (!card) return;
     const rb = card.querySelector(".rating-bar");
@@ -977,14 +898,12 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   _ratingBarInner(tmdbScore, r) {
-    // r = Overseerr /movie/{id}/ratings response:
-    //   { criticsRating, criticsScore, audienceRating, audienceScore }
-    // imdbScore = separately fetched via OMDb API (optional, needs config key)
+
     const parts = [];
     if (tmdbScore) {
       parts.push(`<span class="rb-item rb-tmdb" title="TMDB">⭐ ${Number(tmdbScore).toFixed(1)}</span>`);
     }
-    // IMDb score comes from OMDb — stored separately as r._imdb when available
+
     if (r && r._imdb) {
       parts.push(`<span class="rb-item rb-imdb" title="IMDb">🎬 ${r._imdb}</span>`);
     }
@@ -1008,7 +927,7 @@ class SeerrRequestarrCard extends HTMLElement {
     const type = card.dataset.type;
     const m    = this._discData.find(x => x.id === id);
     if (!m) return;
-    // Use browse detail state so back returns to discover
+
     this._cancelGrace();
     this._pushNav();
     this._browseDetail        = { ...m, mediaType: type || m.mediaType };
@@ -1016,7 +935,7 @@ class SeerrRequestarrCard extends HTMLElement {
     this._browseDetailLoading = true;
     this._paint();
     const path = (type === "tv" || m.mediaType === "tv") ? `/tv/${m.id}` : `/movie/${m.id}`;
-    // Only movies have a ratings endpoint
+
     const ratingPath = (m.mediaType === "tv") ? null : path + "/ratings";
     Promise.all([
       this._get(path),
@@ -1046,7 +965,7 @@ class SeerrRequestarrCard extends HTMLElement {
       if (this._searchFilter === "movie") res = res.filter(r => r.mediaType === "movie");
       if (this._searchFilter === "tv")    res = res.filter(r => r.mediaType === "tv");
       this._searchResults = res;
-      // Prefetch ratings for movie results so they appear on tiles
+
       this._fetchRatingsForItems(res);
     } catch (e) {
       this._toast("Search failed: " + e.message, "error"); this._searchResults = [];
@@ -1055,7 +974,6 @@ class SeerrRequestarrCard extends HTMLElement {
     }
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
   _toast(msg, type = "success") {
     const t = this.shadowRoot.querySelector(".toast");
     if (!t) return;
@@ -1075,20 +993,14 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   _detailRatingsHtml(m) {
-    // Overseerr /movie/{id}/ratings fields:
-    //   criticsRating: "Rotten" | "Fresh" | "Certified Fresh"
-    //   criticsScore: 0-100
-    //   audienceRating: "Upright" | "Spilled"
-    //   audienceScore: 0-100
-    //   imdbRating: string e.g. "8.1"
-    //   imdbVotes: string e.g. "1,234,567"
+
     const r    = m._ratings || this._ratingsCache[m.id] || null;
     const tmdb = m.voteAverage;
-    const imdb = r?._imdb;   // set by OMDb fetch when omdb_api_key is configured
+    const imdb = r?._imdb;
     const rtC  = r?.criticsScore;
     const rtA  = r?.audienceScore;
     if (!tmdb && !imdb && rtC == null && rtA == null) return "";
-    // Always render TMDB block if we have a voteAverage
+
     const blocks = [];
     if (tmdb) blocks.push(`
       <div class="rating-block">
@@ -1126,7 +1038,7 @@ class SeerrRequestarrCard extends HTMLElement {
 
   _langName(code) {
     if (!code) return null;
-    // Map common ISO 639-1 codes to readable names
+
     const LANGS = {
       en:"English", ja:"Japanese", ko:"Korean", zh:"Chinese", fr:"French",
       es:"Spanish", de:"German", it:"Italian", pt:"Portuguese", ru:"Russian",
@@ -1139,7 +1051,7 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   _cardTagline(item) {
-    // Use tagline if present, otherwise first sentence of overview (≤65 chars)
+
     if (item.tagline) return item.tagline;
     if (item.overview) {
       const sentence = item.overview.split(/[.!?]/)[0].trim();
@@ -1155,8 +1067,6 @@ class SeerrRequestarrCard extends HTMLElement {
     if (!r) return null;
     return r >= 60 ? `${Math.floor(r/60)}h ${r%60}m` : `${r}m`;
   }
-
-  // ── HTML builders ─────────────────────────────────────────────────────────
 
   _trendCardHtml(item) {
     const p      = this._img(item.posterPath, "w185");
@@ -1201,7 +1111,6 @@ class SeerrRequestarrCard extends HTMLElement {
       </div>`;
   }
 
-  // Rating card — unified with media-card, uses card-body flex layout
   _ratingCardHtml(item) {
     const p      = this._img(item.posterPath, "w185");
     const year   = this._year(item);
@@ -1234,7 +1143,6 @@ class SeerrRequestarrCard extends HTMLElement {
     </div>`;
   }
 
-  // ── Discover tab HTML ─────────────────────────────────────────────────────
   _discoverHtml() {
     const sections = DISCOVER_SECTIONS[this._discType];
     const typeButtons = [
@@ -1242,7 +1150,6 @@ class SeerrRequestarrCard extends HTMLElement {
       { k: "tv",     l: "📺 TV Shows" },
     ].map(t => `<button class="disc-type-btn${this._discType===t.k?" active":""}" data-dtype="${t.k}">${t.l}</button>`).join("");
 
-    // Split into core sections and genre sections (genre IDs start with "g-")
     const coreSecs  = sections.filter(s => !s.id.startsWith("g-"));
     const genreSecs = sections.filter(s =>  s.id.startsWith("g-"));
     const secButtons =
@@ -1262,15 +1169,14 @@ class SeerrRequestarrCard extends HTMLElement {
 
     let gridContent;
     if (this._discLoading && !this._discData.length) {
-      // Page 1 loading — show full spinner (no data yet)
+
       gridContent = `<div class="state-box"><div class="spinner"></div><span>Loading…</span></div>`;
     } else if (this._discError) {
       gridContent = this._stateHtml("⚠️", "Could not load", this._discError, "discover");
     } else if (!this._discData.length) {
       gridContent = `<div class="state-box"><div class="state-icon">🎬</div>No results</div>`;
     } else {
-      // Data exists (page>1 load in progress or complete) — always show data
-      // Footer shows spinner if loading, button if not
+
       gridContent = `<div class="poster-grid">${this._discData.map(i => this._ratingCardHtml(i)).join("")}</div>${footer}`;
     }
 
@@ -1284,7 +1190,6 @@ class SeerrRequestarrCard extends HTMLElement {
       </div>`;
   }
 
-  // ── Trending tab HTML ─────────────────────────────────────────────────────
   _trendingHtml() {
     if (this._trendLoading && !this._trendMovies.length && !this._trendTV.length) {
       return `<div class="trend-wrap"><div class="state-box"><div class="spinner"></div><span>Loading…</span></div></div>`;
@@ -1315,11 +1220,9 @@ class SeerrRequestarrCard extends HTMLElement {
       </div>`;
   }
 
-  // ── Browse (full-screen) HTML ─────────────────────────────────────────────
   _browseHtml() {
     const label  = this._browseMode === "movies" ? "🎬 Trending Movies" : "📺 Trending TV Shows";
-    // Footer lives OUTSIDE poster-grid so it never interrupts the grid's
-    // auto-fill layout and new cards always slot into existing gaps.
+
     const footer = !this._browseDone
       ? `<div class="browse-footer" style="display:flex;justify-content:center;padding:10px 0 4px">
           ${this._browseLoading
@@ -1342,7 +1245,6 @@ class SeerrRequestarrCard extends HTMLElement {
       </div>`;
   }
 
-  // ── Detail HTML ───────────────────────────────────────────────────────────
   _detailHtml(m, full, loading) {
     if (!m) return "";
     const isLoading   = loading && !full;
@@ -1361,7 +1263,7 @@ class SeerrRequestarrCard extends HTMLElement {
     const isReq       = !isAvail && (m.mediaInfo?.status || 0) >= 2;
     const btnClass    = (isAvail || isReq) ? "already" : "";
     const btnLabel    = isAvail ? "✓ Already in Library" : isReq ? "⏳ Already Requested" : "🎬 Request This";
-    // Extra fields from enriched data
+
     const network     = (m.networks || [])[0]?.name || null;
     const studio      = (m.productionCompanies || [])[0]?.name || null;
     const seasons     = m.numberOfSeasons;
@@ -1429,7 +1331,6 @@ class SeerrRequestarrCard extends HTMLElement {
       </div>`;
   }
 
-  // ── Search tab HTML ───────────────────────────────────────────────────────
   _searchHtml() {
     if (this._detail) return this._detailHtml(this._detailFull || this._detail, this._detailFull, this._detailLoading);
     const chips = [{k:"all",l:"All"},{k:"movie",l:"🎬 Movies"},{k:"tv",l:"📺 TV"}];
@@ -1451,7 +1352,6 @@ class SeerrRequestarrCard extends HTMLElement {
       <div class="scroll-grid">${grid}</div>`;
   }
 
-  // ── Requests tab HTML ─────────────────────────────────────────────────────
   _requestsHtml() {
     if (this._reqLoading && !this._requests.length)
       return `<div class="req-wrap"><div class="state-box"><div class="spinner"></div><span>Loading requests…</span></div></div>`;
@@ -1469,7 +1369,7 @@ class SeerrRequestarrCard extends HTMLElement {
       const type = (req.type==="movie"||med.mediaType==="movie") ? "Movie" : "TV";
       const rs   = REQST[req.status] || REQST[1];
       const date = req.createdAt ? new Date(req.createdAt).toLocaleDateString() : "";
-      // Build a minimal media-like object for the detail view
+
       const tmdbId = med.tmdbId || (req._d?.id);
       const mType  = (req.type==="movie"||med.mediaType==="movie") ? "movie" : "tv";
       return `
@@ -1486,11 +1386,10 @@ class SeerrRequestarrCard extends HTMLElement {
     }).join("")}</div>`;
   }
 
-  // ── Paint ─────────────────────────────────────────────────────────────────
   _paint() {
     const tc = this.shadowRoot.querySelector(".tc");
     if (!tc) return;
-    // Detail opened from within browse view
+
     if (this._browseDetail) {
       tc.innerHTML = this._detailHtml(this._browseDetail, this._browseDetailFull, this._browseDetailLoading);
       this._bindBrowseDetail(tc);
@@ -1498,7 +1397,6 @@ class SeerrRequestarrCard extends HTMLElement {
       return;
     }
 
-    // If in browse mode, show browse view
     if (this._browseMode) {
       tc.innerHTML = this._browseHtml();
       this._bindBrowse(tc);
@@ -1506,7 +1404,6 @@ class SeerrRequestarrCard extends HTMLElement {
       return;
     }
 
-    // If showing detail (from search/trending tabs)
     if (this._detail) {
       tc.innerHTML = this._detailHtml(this._detailFull || this._detail, this._detailFull, this._detailLoading);
       this._bindDetail(tc);
@@ -1520,7 +1417,7 @@ class SeerrRequestarrCard extends HTMLElement {
       case "search":   tc.innerHTML = this._searchHtml();   this._bindSearch(tc);   break;
       case "requests": tc.innerHTML = this._requestsHtml(); this._bindRetry(tc); this._bindRequests(tc); break;
     }
-    this._restoreScroll(); // restore remembered position for this view
+    this._restoreScroll();
   }
 
   _paintSearch() {
@@ -1536,8 +1433,6 @@ class SeerrRequestarrCard extends HTMLElement {
     sg.querySelectorAll(".media-card").forEach(c => c.addEventListener("click", () => this._openDetail(c)));
   }
 
-  // ── Event binding ─────────────────────────────────────────────────────────
-
   _openDetail(card) {
     const id   = parseInt(card.dataset.id);
     const type = card.dataset.type;
@@ -1551,14 +1446,14 @@ class SeerrRequestarrCard extends HTMLElement {
     const type = card.dataset.type;
     const m    = this._browseData.find(x => x.id === id && x.mediaType === type);
     if (!m) return;
-    // Open detail layered on top of browse — preserves browse scroll on back
+
     this._cancelGrace();
     this._pushNav();
     this._browseDetail        = m;
     this._browseDetailFull    = null;
     this._browseDetailLoading = true;
     this._paint();
-    // Fetch full details
+
     const path = m.mediaType === "movie" ? `/movie/${m.id}` : `/tv/${m.id}`;
     const rPath = m.mediaType === "tv" ? null : path + "/ratings";
     Promise.all([
@@ -1594,26 +1489,25 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   _bindDiscover(tc) {
-    // Type switcher
+
     tc.querySelectorAll("[data-dtype]").forEach(btn =>
       btn.addEventListener("click", () => {
         if (this._discType === btn.dataset.dtype) return;
-        this._cancelGrace(); // type switch resets grace
-        this._saveScroll(); // save disc-grid scroll before switching type
+        this._cancelGrace();
+        this._saveScroll();
         this._discType    = btn.dataset.dtype;
         this._discSection = DISCOVER_SECTIONS[this._discType][0].id;
         this._discData    = []; this._discPage = 1; this._discDone = false;
         this._loadDiscover(1);
       })
     );
-    // Section switcher — update active pill in-place (no full re-render)
-    // so the pill row scroll position is NEVER disturbed.
+
     tc.querySelectorAll("[data-dsec]").forEach(btn =>
       btn.addEventListener("click", () => {
         if (this._discSection === btn.dataset.dsec) return;
-        this._cancelGrace(); // section switch resets grace
-        this._saveScroll(); // save disc-grid scroll before switching section
-        // Toggle active class on pills without touching scroll
+        this._cancelGrace();
+        this._saveScroll();
+
         this.shadowRoot.querySelectorAll("[data-dsec]").forEach(b =>
           b.classList.toggle("active", b.dataset.dsec === btn.dataset.dsec));
         this._discSection = btn.dataset.dsec;
@@ -1621,13 +1515,13 @@ class SeerrRequestarrCard extends HTMLElement {
         this._loadDiscoverGrid(1);
       })
     );
-    // Rating cards
+
     tc.querySelectorAll(".rating-card").forEach(c =>
       c.addEventListener("click", () => this._openDiscoverDetail(c)));
-    // Load more — use grid-only update to preserve pill row scroll
+
     tc.querySelector("[data-action='disc-more']")?.addEventListener("click", () =>
       this._loadDiscoverGrid(this._discPage + 1));
-    // Retry
+
     tc.querySelectorAll(".retry-btn[data-retry='discover']").forEach(btn =>
       btn.addEventListener("click", () => {
         this._discError = null; this._loadDiscover(1);
@@ -1639,7 +1533,7 @@ class SeerrRequestarrCard extends HTMLElement {
   _bindBrowse(tc) {
     tc.querySelector(".browse-back")?.addEventListener("click", () => {
       this._cancelGrace();
-      this._saveScroll(); // save browse scroll before leaving
+      this._saveScroll();
       this._browseMode = null; this._paint();
     });
     tc.querySelectorAll(".media-card").forEach(c =>
@@ -1651,7 +1545,7 @@ class SeerrRequestarrCard extends HTMLElement {
   _bindBrowseDetail(tc) {
     tc.querySelector(".back-btn")?.addEventListener("click", () => {
       this._cancelGrace();
-      this._saveScroll(); // save detail scroll before leaving
+      this._saveScroll();
       this._browseDetail = null; this._browseDetailFull = null;
       this._paint();
     });
@@ -1662,7 +1556,7 @@ class SeerrRequestarrCard extends HTMLElement {
   _bindDetail(tc) {
     tc.querySelector(".back-btn")?.addEventListener("click", () => {
       this._cancelGrace();
-      this._saveScroll(); // save detail scroll before leaving
+      this._saveScroll();
       this._detail = null; this._detailFull = null; this._paint();
     });
     const rb = tc.querySelector(".req-btn");
@@ -1693,13 +1587,13 @@ class SeerrRequestarrCard extends HTMLElement {
         const tmdbId = parseInt(item.dataset.reqid);
         const mType  = item.dataset.reqtype;
         if (!tmdbId || !mType) return;
-        // Find the matching enriched request to get poster/title for immediate display
+
         const req = this._requests.find(r => {
           const med = r.media || {};
           return (med.tmdbId === tmdbId || r._d?.id === tmdbId);
         });
         const stub = req?._d || req?.media || {};
-        // Open detail directly using the tmdbId — treat like a media card click
+
         const media = { id: tmdbId, mediaType: mType, ...stub };
         this._loadDetail(media);
       });
@@ -1707,7 +1601,7 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   _bindRetry(tc) {
-    // Only bind buttons with data-retry attr — NOT load-more buttons which share the retry-btn class
+
     tc.querySelectorAll(".retry-btn[data-retry]").forEach(btn => {
       btn.addEventListener("click", () => {
         if (btn.dataset.retry === "trending") { this._trendError = null; this._loadTrending(); }
@@ -1733,12 +1627,8 @@ class SeerrRequestarrCard extends HTMLElement {
       t.classList.toggle("active", t.dataset.tab === this._tab));
   }
 
-  // ── Browser back button support ──────────────────────────────────────────
-
-  // ── Scroll position memory ─────────────────────────────────────────────────
-
   _scrollKey() {
-    // Unique key for the current view's scrollable container
+
     if (this._browseDetail)  return `browseDetail:${this._browseDetail?.id}`;
     if (this._detail)        return `detail:${this._detail?.id}`;
     if (this._browseMode)    return `browse:${this._browseMode}`;
@@ -1759,13 +1649,13 @@ class SeerrRequestarrCard extends HTMLElement {
     const key = this._scrollKey();
     const el  = this._scrollEl();
     if (el && this._scrollPos[key] != null) {
-      // Use rAF to ensure DOM is fully laid out before restoring
+
       requestAnimationFrame(() => { el.scrollTop = this._scrollPos[key]; });
     }
   }
 
   _scrollEl() {
-    // Returns the active scrollable element for the current view
+
     const sr = this.shadowRoot;
     if (this._browseDetail)  return sr.querySelector(".detail-scroll");
     if (this._detail)        return sr.querySelector(".detail-scroll");
@@ -1783,60 +1673,34 @@ class SeerrRequestarrCard extends HTMLElement {
     this._warnActive     = false;
     this._backGraceTimer = null;
 
-    // ── Stack layout ──────────────────────────────────────────────────────
-    //   At root:      [GRACE] [HA-entries...]
-    //   In sub-view:  [NAV]   [GRACE] [HA-entries...]
-    //
-    // Key fact about e.state in popstate:
-    //   e.state = state of entry we LANDED ON (destination), not what was popped.
-    //
-    // Therefore:
-    //   Back pops GRACE → lands on HA-entry → e.state = HA's state (not "grace")
-    //   Back pops NAV   → lands on GRACE    → e.state = {seerr:"grace"}
-    //
-    // Logic (check sub-view JS state FIRST, then e.state):
-    //   Case A: sub-view open → NAV was popped → close sub-view, pushGrace
-    //   Case B: no sub-view, e.state.seerr === "grace" → this can't happen
-    //           (if no sub-view, NAV wasn't on top, so we can't land on GRACE)
-    //           Treat as root back anyway for safety.
-    //   Case C: no sub-view, e.state anything else → GRACE was popped → root back
-    //           Show toast / exit.
-
     const pushGrace = () => history.pushState({ seerr: "grace" }, "");
     const pushNav   = () => history.pushState({ seerr: "nav"   }, "");
 
-    pushGrace(); // seed initial grace entry
+    pushGrace();
 
     window.addEventListener("popstate", e => {
       const s = e.state?.seerr;
 
-      // Case A: sub-view is open → NAV was on top and was just popped.
-      // We landed on GRACE (already there below NAV). Do NOT pushGrace again —
-      // that would create duplicate GRACE entries, breaking subsequent graces.
       if (this._browseDetail || this._detail || this._browseMode) {
         this._cancelGrace();
         this._saveScroll();
         if      (this._browseDetail) { this._browseDetail = null; this._browseDetailFull = null; }
         else if (this._detail)       { this._detail = null; this._detailFull = null; }
         else                         { this._browseMode = null; }
-        // GRACE is already the current entry (we landed on it) — no pushGrace needed
+
         this._paint();
         return;
       }
 
-      // Case B/C: no sub-view → GRACE was on top and was just popped
-      // e.state is HA's entry below GRACE (not "grace").
-      // This is the root-level back press — apply grace logic.
       if (!this._warnActive) {
-        // First press at root: show toast, re-push GRACE, arm timer
+
         pushGrace();
         this._warnActive = true;
         this._toast("Press back again to exit", "error");
         clearTimeout(this._backGraceTimer);
         this._backGraceTimer = setTimeout(() => { this._warnActive = false; }, 3000);
       } else {
-        // Second press within grace window: EXIT
-        // Do NOT re-push GRACE — HA's entries are now exposed, HA exits naturally
+
         this._warnActive = false;
         clearTimeout(this._backGraceTimer);
       }
@@ -1849,16 +1713,12 @@ class SeerrRequestarrCard extends HTMLElement {
     this._backGraceTimer = null;
   }
 
-  // Called when navigating INTO a sub-view (detail, browse)
   _pushNav() {
     history.pushState({ seerr: "nav" }, "");
   }
 
-
-
-  // ── Root render ───────────────────────────────────────────────────────────
   _render() {
-    // Tab order: Trending → Search → Requests
+
     const tabs = [
       { k: "trending", i: "🔥", l: "Trending"  },
       { k: "discover", i: "🧭", l: "Discover"  },
@@ -1885,16 +1745,13 @@ class SeerrRequestarrCard extends HTMLElement {
         <div class="toast"></div>
       </div>`;
 
-    // Use a single delegated listener on the root div so it survives any
-    // innerHTML updates within .tc. Tab buttons live outside .tc so they
-    // are only destroyed if _render() is called again (setConfig).
     this.shadowRoot.querySelector(".root")?.addEventListener("click", e => {
       const btn = e.target.closest(".tab");
       if (!btn) return;
       const tab = btn.dataset.tab;
       if (!tab || tab === this._tab && !this._detail && !this._browseDetail && !this._browseMode) return;
-      this._saveScroll(); // save current view scroll before switching tab
-      this._cancelGrace();   // any navigation resets back-grace
+      this._saveScroll();
+      this._cancelGrace();
       this._tab              = tab;
       this._detail           = null;
       this._detailFull       = null;
@@ -1905,8 +1762,9 @@ class SeerrRequestarrCard extends HTMLElement {
       this._browseDetailLoading = false;
       this._updateTabs();
       this._paint();
-      if (this._tab === "requests" && !this._reqLoading) this._loadRequests();  // always refresh on tab open
+      if (this._tab === "requests" && !this._reqLoading) this._loadRequests();
       if (this._tab === "trending" && !this._trendMovies.length && !this._trendLoading) this._loadTrending();
+      if (this._tab === "trending" && this._trendMovies.length && !this._trendLoading) this._fetchRatingsForItems(this._trendMovies);
       if (this._tab === "discover" && !this._discData.length && !this._discLoading) this._loadDiscover(1);
     });
     this._paint();
