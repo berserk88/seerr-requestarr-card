@@ -756,7 +756,8 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   async _loadDetail(media) {
-    this._cancelGrace(); // entering detail resets back-grace
+    this._cancelGrace();
+    this._pushNav();    // push nav entry for back button
     this._detail        = media;
     this._detailFull    = null;
     this._detailLoading = true;
@@ -1002,7 +1003,8 @@ class SeerrRequestarrCard extends HTMLElement {
     const m    = this._discData.find(x => x.id === id);
     if (!m) return;
     // Use browse detail state so back returns to discover
-    this._cancelGrace(); // entering detail resets back-grace
+    this._cancelGrace();
+    this._pushNav();
     this._browseDetail        = { ...m, mediaType: type || m.mediaType };
     this._browseDetailFull    = null;
     this._browseDetailLoading = true;
@@ -1524,7 +1526,8 @@ class SeerrRequestarrCard extends HTMLElement {
     const m    = this._browseData.find(x => x.id === id && x.mediaType === type);
     if (!m) return;
     // Open detail layered on top of browse — preserves browse scroll on back
-    this._cancelGrace(); // entering detail resets back-grace
+    this._cancelGrace();
+    this._pushNav();
     this._browseDetail        = m;
     this._browseDetailFull    = null;
     this._browseDetailLoading = true;
@@ -1552,7 +1555,8 @@ class SeerrRequestarrCard extends HTMLElement {
       c.addEventListener("click", () => this._openDetail(c)));
     tc.querySelectorAll("[data-browse]").forEach(btn =>
       btn.addEventListener("click", () => {
-        this._cancelGrace(); // entering browse resets back-grace
+        this._cancelGrace();
+        this._pushNav();
         this._browseMode = btn.dataset.browse;
         this._browseData = [];
         this._browsePage = 1;
@@ -1751,84 +1755,65 @@ class SeerrRequestarrCard extends HTMLElement {
     this._historyBound = true;
     this._warnActive     = false;
     this._backGraceTimer = null;
-    this._handlingBack   = false;
 
-    // ── Core invariant ────────────────────────────────────────────────────
-    // Our sentinel {seerr:"s"} must ALWAYS be the topmost history entry.
-    // We enforce this by intercepting history.pushState permanently —
-    // after any external push, we push our sentinel on top.
-    // This means EVERY back press pops our sentinel and hits our handler.
+    // ── CORRECT PATTERN ───────────────────────────────────────────────────
+    // Push one history entry each time the user navigates FORWARD into a
+    // sub-view (detail / browse). The history stack then exactly mirrors
+    // the card's navigation depth.
     //
-    // The interceptor is NEVER removed, even after an exit. After exit,
-    // we push a fresh sentinel so the invariant holds for next time.
+    // On popstate (back button): if we have a sub-view open, close it.
+    // When the stack is empty (user is at root), HA handles back natively.
     //
-    // Exit path: set _allowExit flag, push sentinel, return. The NEXT
-    // popstate fires immediately (from the browser continuing the back
-    // navigation). We see _allowExit=true and let HA handle it.
+    // Grace toast: push a GRACE entry on top when at root. On popstate:
+    //   - If popped state is "grace" and _warnActive: EXIT (let HA handle)
+    //   - If popped state is "grace" and !_warnActive: show toast, re-push grace
+    //   - If popped state is "nav": close sub-view, don't re-push grace entry
+    //
+    // The grace entry is separate from nav entries. It is ALWAYS on top.
+    // We push it: on init, after every nav pop, and after every grace toast.
+    // So the stack is always: [GRACE] [nav?] [nav?] [...] [HA-entries]
 
-    const origPush = history.pushState.bind(history);
+    const pushGrace = () => history.pushState({ seerr: "grace" }, "");
+    const pushNav   = () => history.pushState({ seerr: "nav"   }, "");
 
-    // Permanently intercept pushState
-    const self = this;
-    history.pushState = function(state, title, url) {
-      origPush(state, title, url);
-      if (!self._handlingBack) {
-        origPush({ seerr: "s" }, "");
-      }
-    };
+    // Seed grace entry on top
+    pushGrace();
 
-    // Seed initial sentinel
-    origPush({ seerr: "s" }, "");
+    window.addEventListener("popstate", e => {
+      const s = e.state?.seerr;
 
-    window.addEventListener("popstate", () => {
-      if (this._handlingBack) return;
-      this._handlingBack = true;
-
-      // ── Allow-exit pass-through ──────────────────────────────────────
-      // If _allowExit is true, this popstate is the one we want HA to handle.
-      // Push sentinel back so the NEXT press is intercepted, then let HA exit.
-      if (this._allowExit) {
-        this._allowExit = false;
-        // Push sentinel back for next time
-        origPush({ seerr: "s" }, "");
-        this._handlingBack = false;
-        // Do NOT navigate in JS — let the page change HA triggered take effect
-        return;
-      }
-
-      // ── Sub-view: go back one level ──────────────────────────────────
-      if (this._browseDetail || this._detail || this._browseMode) {
+      if (s === "nav") {
+        // A forward-navigation entry was popped — close sub-view
         this._cancelGrace();
         this._saveScroll();
         if      (this._browseDetail) { this._browseDetail = null; this._browseDetailFull = null; }
         else if (this._detail)       { this._detail = null; this._detailFull = null; }
-        else                         { this._browseMode = null; }
-        origPush({ seerr: "s" }, "");
-        this._handlingBack = false;
+        else if (this._browseMode)   { this._browseMode = null; }
+        // Push grace back on top so next back is intercepted
+        pushGrace();
         this._paint();
         return;
       }
 
-      // ── Top-level + grace active: EXIT ───────────────────────────────
-      if (this._warnActive) {
-        this._warnActive = false;
-        clearTimeout(this._backGraceTimer);
-        // Set flag so next popstate (HA's back navigation) is allowed through.
-        // Then call history.back() to actually move back in HA's history.
-        // Our interceptor will push a fresh sentinel after HA's back navigation.
-        this._allowExit = true;
-        this._handlingBack = false;
-        history.back(); // triggers HA's navigation backward
+      if (s === "grace") {
+        if (!this._warnActive) {
+          // First press at root: show toast, re-push grace, arm timer
+          pushGrace();
+          this._warnActive = true;
+          this._toast("Press back again to exit", "error");
+          clearTimeout(this._backGraceTimer);
+          this._backGraceTimer = setTimeout(() => { this._warnActive = false; }, 3000);
+        } else {
+          // Second press within grace: EXIT — do NOT push grace back
+          this._warnActive = false;
+          clearTimeout(this._backGraceTimer);
+          // Stack is now at HA's own entries — HA handles exit naturally
+        }
         return;
       }
 
-      // ── Top-level + no grace: show toast ────────────────────────────
-      this._warnActive = true;
-      this._toast("Press back again to exit", "error");
-      clearTimeout(this._backGraceTimer);
-      this._backGraceTimer = setTimeout(() => { this._warnActive = false; }, 3000);
-      origPush({ seerr: "s" }, "");
-      this._handlingBack = false;
+      // Any other state (HA's own entries): push grace back and ignore
+      pushGrace();
     });
   }
 
@@ -1838,10 +1823,12 @@ class SeerrRequestarrCard extends HTMLElement {
     this._backGraceTimer = null;
   }
 
-  _pushHistoryState() {
-    // No-op: we maintain the guard stack in _setupHistory instead
-    // History states are managed centrally — no per-navigation pushes needed
+  // Called when navigating INTO a sub-view (detail, browse)
+  _pushNav() {
+    history.pushState({ seerr: "nav" }, "");
   }
+
+
 
   // ── Root render ───────────────────────────────────────────────────────────
   _render() {
