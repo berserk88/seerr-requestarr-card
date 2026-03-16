@@ -538,8 +538,11 @@ class SeerrRequestarrCard extends HTMLElement {
     const ss = Object.values(this._hass.states);
     const p  = ss.find(s => s.entity_id.includes("seerr") && s.entity_id.includes("pending"));
     const t  = ss.find(s => s.entity_id.includes("seerr") && s.entity_id.includes("total"));
-    if (p) this._pending = parseInt(p.state) || 0;
-    if (t) this._total   = parseInt(t.state) || 0;
+    // Only update from hass sensor state if the value is HIGHER than our local count.
+    // This prevents hass state updates from reverting an optimistic increment.
+    // When the coordinator catches up, the sensor value will match or exceed ours.
+    if (p) { const v = parseInt(p.state) || 0; if (v > this._pending) this._pending = v; }
+    if (t) { const v = parseInt(t.state) || 0; if (v > this._total)   this._total   = v; }
     const ep = this.shadowRoot.querySelector(".stat-pending");
     const et = this.shadowRoot.querySelector(".stat-total");
     if (ep) ep.textContent = this._pending;
@@ -685,6 +688,10 @@ class SeerrRequestarrCard extends HTMLElement {
         })
       );
       this._requests = enriched;
+      // Update counts from real data so badges reflect truth after background reload
+      this._total   = enriched.length;
+      this._pending = enriched.filter(r => (REQST[r.status] || REQST[1]).label === "Pending").length;
+      this._syncStats();
 
       this._fetchRatingsForItems(
         enriched.map(r => ({ ...r._d, mediaType: r.type || r.media?.mediaType })).filter(Boolean)
