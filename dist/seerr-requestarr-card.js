@@ -737,6 +737,11 @@ class SeerrRequestarrCard extends HTMLElement {
       await this._post("/request", payload);
       this._toast(`✓ "${media.title || media.name}" requested!`, "success");
       if (btn) { btn.classList.add("sent"); btn.textContent = "✓ Request Sent!"; }
+      // Optimistically increment stats immediately so header badges update now
+      this._total++;
+      this._pending++;
+      this._syncStats();
+      // Then do a full reload in the background
       this._loadRequests();
     } catch (e) {
       this._toast("Request failed: " + e.message, "error");
