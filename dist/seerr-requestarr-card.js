@@ -711,6 +711,7 @@ class SeerrRequestarrCard extends HTMLElement {
   }
 
   async _loadDetail(media) {
+    this._saveScroll();   // save parent view position before entering detail
     this._cancelGrace();
     this._pushNav();
     this._detail        = media;
@@ -940,6 +941,7 @@ class SeerrRequestarrCard extends HTMLElement {
     const m    = this._discData.find(x => x.id === id);
     if (!m) return;
 
+    this._saveScroll();   // save discover grid position before entering detail
     this._cancelGrace();
     this._pushNav();
     this._browseDetail        = { ...m, mediaType: type || m.mediaType };
@@ -1459,6 +1461,7 @@ class SeerrRequestarrCard extends HTMLElement {
     const m    = this._browseData.find(x => x.id === id && x.mediaType === type);
     if (!m) return;
 
+    this._saveScroll();   // save browse grid position before entering detail
     this._cancelGrace();
     this._pushNav();
     this._browseDetail        = m;
@@ -1488,6 +1491,7 @@ class SeerrRequestarrCard extends HTMLElement {
       c.addEventListener("click", () => this._openDetail(c)));
     tc.querySelectorAll("[data-browse]").forEach(btn =>
       btn.addEventListener("click", () => {
+        this._saveScroll();   // save trending row position before entering browse
         this._cancelGrace();
         this._pushNav();
         this._browseMode = btn.dataset.browse;
@@ -1695,7 +1699,6 @@ class SeerrRequestarrCard extends HTMLElement {
 
       if (this._browseDetail || this._detail || this._browseMode) {
         this._cancelGrace();
-        this._saveScroll();
         if      (this._browseDetail) { this._browseDetail = null; this._browseDetailFull = null; }
         else if (this._detail)       { this._detail = null; this._detailFull = null; }
         else                         { this._browseMode = null; }
